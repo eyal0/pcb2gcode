@@ -210,7 +210,7 @@ void autoleveller::header( std::ofstream &of )
             while (j <= numYPoints - 1)
             {
                 of << "G0 Z" << zprobe << '\n';
-                of << "X" << i * XProbeDist + startPointX << " Y" << j * YProbeDist + startPointY << '\n';
+                of << "G01 X" << i * XProbeDist + startPointX << " Y" << j * YProbeDist + startPointY << '\n';
                 of << probeCodeCustom << " Z" << zfail << " F" << feedrate << '\n';
                 of << getVarName(i, j) << "=" << zProbeResultVarCustom << '\n';
                 j += incr_decr;
@@ -324,7 +324,7 @@ string autoleveller::addChainPoint ( icoordpair point )
         for( i = subsegments.begin(); i != subsegments.end(); i++ )
         {
             outputStr += interpolatePoint( *i );
-            outputStr += str( format( "X%1$.5f Y%2$.5f Z[#3+#4]\n" ) % i->first % i->second );
+            outputStr += str( format( "G01 X%1$.5f Y%2$.5f Z[#3+#4]\n" ) % i->first % i->second );
         }
 
     lastPoint = point;
