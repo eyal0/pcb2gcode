@@ -24,6 +24,11 @@ using std::swap;
 
 #include <utility>
 #include <cstdint>
+#include <list>
+using std::list;
+
+#include <forward_list>
+using std::forward_list;
 
 #include <boost/format.hpp>
 
@@ -156,6 +161,59 @@ void GerberImporter::render(Cairo::RefPtr<Cairo::ImageSurface> surface, const gu
     /// @todo check wheter importing was successful
 }
 
+void GerberImporter::rings_to_polygons(const vector<ring_type>& rings, multi_polygon_type& mpoly)
+{
+    list<const ring_type *> rings_ptr;
+    map<const ring_type *, coordinate_type> areas;
+
+    auto compare_areas = [&](const ring_type *a, const ring_type *b) { return areas.at(a) < areas.at(b); };
+
+    for (const ring_type& ring : rings)
+    {
+        rings_ptr.push_back(&ring);
+        areas[&ring] = coordinate_type(bg::area(ring));
+    }
+
+    while (!rings_ptr.empty())
+    {
+        mpoly.push_back(polygon_type());
+
+        forward_list<list<const ring_type *>::iterator> to_be_removed_rings;
+        auto biggest_ring = max_element(rings_ptr.begin(), rings_ptr.end(), compare_areas);
+        polygon_type& current_ring = mpoly.back();
+
+        bg::assign(current_ring.outer(), **biggest_ring);
+        rings_ptr.erase(biggest_ring);
+
+        for (auto i = rings_ptr.begin(); i != rings_ptr.end(); i++)
+        {
+            if (bg::within(**i, current_ring.outer()))
+            {
+                list<const ring_type *>::iterator j;
+
+                for (j = rings_ptr.begin(); j != rings_ptr.end(); j++)
+                    if (i != j && bg::within(**i, **j))
+                            break;
+
+                if (j == rings_ptr.end())
+                {
+                    current_ring.inners().push_back(ring_type());
+                    current_ring.inners().back().reserve((*i)->size());
+
+                    for (auto point = (*i)->rbegin(); point != (*i)->rend(); point++)
+                    {
+                        current_ring.inners().back().push_back(*point);
+                    }
+                    to_be_removed_rings.push_front(i);
+                }
+            }
+        }
+
+        for (auto i : to_be_removed_rings)
+            rings_ptr.erase(i);
+    }
+}
+
 void GerberImporter::draw_regular_polygon(point_type center, coordinate_type diameter, unsigned int vertices,
                             coordinate_type offset, bool clockwise, ring_type& ring)
 {
@@ -184,7 +242,7 @@ void GerberImporter::draw_regular_polygon(point_type center, coordinate_type dia
     if (hole_diameter > 0)
     {
         polygon.inners().resize(1);
-        draw_regular_polygon(center, diameter, circle_points, 0, false, polygon.inners().front());
+        draw_regular_polygon(center, hole_diameter, circle_points, 0, false, polygon.inners().front());
     }
 }
 
@@ -195,9 +253,9 @@ void GerberImporter::draw_rectangle(point_type center, coordinate_type width, co
     const coordinate_type y = center.y();
 
     polygon.outer().push_back(point_type(x - width / 2, y - height / 2));
-    polygon.outer().push_back(point_type(x + width / 2, y - height / 2));
-    polygon.outer().push_back(point_type(x + width / 2, y + height / 2));
     polygon.outer().push_back(point_type(x - width / 2, y + height / 2));
+    polygon.outer().push_back(point_type(x + width / 2, y + height / 2));
+    polygon.outer().push_back(point_type(x + width / 2, y - height / 2));
     polygon.outer().push_back(polygon.outer().front());
     
     if (hole_diameter != 0)
@@ -401,9 +459,10 @@ void GerberImporter::merge_paths(multi_linestring_type &destination, const lines
 }
 
 unique_ptr<multi_polygon_type> GerberImporter::generate_layers(vector<pair<const gerbv_layer_t *, gerberimporter_layer> >& layers,
-                                                                coordinate_type cfactor, unsigned int points_per_circle)
+                                                                bool fill_rings, coordinate_type cfactor, unsigned int points_per_circle)
 {
     unique_ptr<multi_polygon_type> output (new multi_polygon_type());
+    vector<ring_type> rings;
 
     for (auto layer = layers.begin(); layer != layers.end(); layer++)
     {
@@ -413,23 +472,76 @@ unique_ptr<multi_polygon_type> GerberImporter::generate_layers(vector<pair<const
         map<coordinate_type, multi_linestring_type>& paths = layer->second.paths;
         unique_ptr<multi_polygon_type>& draws = layer->second.draws;
 
+        const unsigned int layer_rings_offset = rings.size();
+
         for (auto i = paths.begin(); i != paths.end(); i++)
         {
-            multi_polygon_type buffered_mls;
+            if (fill_rings)
+            {
+                for (auto ls = i->second.begin(); ls != i->second.end(); )
+                {
+                    if (bg::equals(ls->front(), ls->back()) && bg::is_valid(*ls))
+                    {
+                        rings.push_back(ring_type());
+                        rings.back().reserve(ls->size());
 
-            bg::buffer(i->second, buffered_mls,
-                       bg::strategy::buffer::distance_symmetric<coordinate_type>(i->first),
-                       bg::strategy::buffer::side_straight(),
-                       bg::strategy::buffer::join_round(points_per_circle),
-                       bg::strategy::buffer::end_round(points_per_circle),
-                       bg::strategy::buffer::point_circle(points_per_circle));
+                        for (auto point = ls->begin(); point != ls->end(); point++)
+                        {
+                            rings.back().push_back(*point);
+                        }
+                        bg::correct(rings.back());
 
-            bg::union_(buffered_mls, *draws, *temp_mpoly);
-            temp_mpoly.swap(draws);
-            temp_mpoly->clear();
+                        ls = i->second.erase(ls);
+                    }
+                    else
+                        ++ls;
+                }
+            }
+
+            if (i->second.size() != 0)
+            {
+                multi_polygon_type buffered_mls;
+
+                bg::buffer(i->second, buffered_mls,
+                           bg::strategy::buffer::distance_symmetric<coordinate_type>(i->first),
+                           bg::strategy::buffer::side_straight(),
+                           bg::strategy::buffer::join_round(points_per_circle),
+                           bg::strategy::buffer::end_round(points_per_circle),
+                           bg::strategy::buffer::point_circle(points_per_circle));
+
+                bg::union_(buffered_mls, *draws, *temp_mpoly);
+                temp_mpoly.swap(draws);
+                temp_mpoly->clear();
+            }
         }
         
         paths.clear();
+
+        if (fill_rings)
+        {
+            unsigned int newrings = rings.size() - layer_rings_offset;
+            unsigned int translated_ring_offset = rings.size();
+
+            rings.resize(layer_rings_offset + newrings * stepAndRepeat.X * stepAndRepeat.Y);
+
+            for (int sr_x = 0; sr_x < stepAndRepeat.X; sr_x++)
+            {
+                for (int sr_y = 0; sr_y < stepAndRepeat.Y; sr_y++)
+                {
+                    if (sr_x != 0 || sr_y != 0)
+                    {
+                        translate translate_strategy(stepAndRepeat.dist_X * sr_x * cfactor,
+                                                     stepAndRepeat.dist_Y * sr_y * cfactor);
+
+                        for (unsigned int i = 0; i < newrings; i++)
+                        {
+                            bg::transform(rings[layer_rings_offset + i], rings[translated_ring_offset], translate_strategy);
+                            ++translated_ring_offset;
+                        }
+                    }
+                }
+            }
+        }
 
         for (int sr_x = 1; sr_x < stepAndRepeat.X; sr_x++)
         {
@@ -496,7 +608,17 @@ unique_ptr<multi_polygon_type> GerberImporter::generate_layers(vector<pair<const
         
         draws->clear();
     }
-    
+
+    if (fill_rings)
+    {
+        multi_polygon_type filled_rings;
+        unique_ptr<multi_polygon_type> merged_mpoly (new multi_polygon_type());
+
+        rings_to_polygons(rings, filled_rings);
+        bg::union_(filled_rings, *output, *merged_mpoly);
+        output.swap(merged_mpoly);
+    }
+
     return output;
 }
 
@@ -517,8 +639,8 @@ void GerberImporter::draw_moire(const double * const parameters, unsigned int ci
 
     for (unsigned int i = 0; i < parameters[5]; i++)
     {
-        const double external_diameter = parameters[2] - (parameters[3] + parameters[4]) * i;
-        double internal_diameter = external_diameter - parameters[3];
+        const double external_diameter = parameters[2] - 2 * (parameters[3] + parameters[4]) * i;
+        double internal_diameter = external_diameter - 2 * parameters[3];
         polygon_type poly;
 
         if (external_diameter <= 0)
@@ -548,9 +670,9 @@ void GerberImporter::draw_thermal(point_type center, coordinate_type external_di
     
     draw_regular_polygon(center, external_diameter, circle_points,
                             0, internal_diameter, circle_points, ring);
-    
-    draw_rectangle(center, gap_width, external_diameter + 1, 0, 0, rect1);
-    draw_rectangle(center, external_diameter + 1, gap_width, 0, 0, rect2);
+
+    draw_rectangle(center, gap_width, 2 * external_diameter, 0, 0, rect1);
+    draw_rectangle(center, 2 * external_diameter, gap_width, 0, 0, rect2);
     bg::union_(rect1, rect2, cross);
     bg::difference(ring, cross, output);
 }
@@ -809,7 +931,7 @@ bool GerberImporter::simplify_cutins(ring_type& ring, polygon_type& polygon)
         return false;
 }
 
-unique_ptr<multi_polygon_type> GerberImporter::render(unsigned int points_per_circle)
+unique_ptr<multi_polygon_type> GerberImporter::render(bool fill_closed_lines, unsigned int points_per_circle)
 {
     map<int, multi_polygon_type> apertures_map;
     ring_type region;
@@ -1042,7 +1164,7 @@ unique_ptr<multi_polygon_type> GerberImporter::render(unsigned int points_per_ci
         }
     }
 
-    return generate_layers(layers, cfactor, points_per_circle);
+    return generate_layers(layers, fill_closed_lines, cfactor, points_per_circle);
 }
 
 /******************************************************************************/
