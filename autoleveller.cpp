@@ -328,7 +328,7 @@ string autoleveller::addChainPoint ( icoordpair point )
             outputStr += interpolatePoint( *i );
             if( options["add-g01"].as<bool>() )
                 outputStr += "G01 ";
-            outputStr += str( format( "G01 X%1$.5f Y%2$.5f Z[#3+#4]\n" ) % i->first % i->second );
+            outputStr += str( format( "X%1$.5f Y%2$.5f Z[#3+#4]\n" ) % i->first % i->second );
         }
 
     lastPoint = point;
