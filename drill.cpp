@@ -282,7 +282,7 @@ void ExcellonProcessor::export_ngc(const string of_dir, const string of_name, sh
                     }
                     else
                     {
-                        of << "X"
+                        of << "G01 X"
                            << ( get_xvalue(coord_iter->first) - xoffsetTot )
                            * cfactor
                            << " Y" << ( ( coord_iter->second - yoffsetTot ) * cfactor) << "\n";
