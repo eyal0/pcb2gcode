@@ -211,7 +211,7 @@ void autoleveller::header( std::ofstream &of )
             {
                 of << "G0 Z" << zprobe << '\n';
                 if( options["add-g01"].as<bool>() )
-                  of << "G01 ";
+                    of << "G01 ";
                 of << "X" << i * XProbeDist + startPointX << " Y" << j * YProbeDist + startPointY << '\n';
                 of << probeCodeCustom << " Z" << zfail << " F" << feedrate << '\n';
                 of << getVarName(i, j) << "=" << zProbeResultVarCustom << '\n';
@@ -327,7 +327,7 @@ string autoleveller::addChainPoint ( icoordpair point )
         {
             outputStr += interpolatePoint( *i );
             if( options["add-g01"].as<bool>() )
-                of << "G01 ";
+                outputStr += "G01 ";
             outputStr += str( format( "G01 X%1$.5f Y%2$.5f Z[#3+#4]\n" ) % i->first % i->second );
         }
 
