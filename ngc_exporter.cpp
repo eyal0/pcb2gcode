@@ -262,7 +262,9 @@ void NGC_Exporter::export_layer(shared_ptr<Layer> layer, string of_name)
                                     || peek == path->end()   //Last
                                     || !aligned(last, iter, peek) )      //Not aligned
                             {
-                                of << "G01 X" << ( iter->first - xoffsetTot ) * cfactor << " Y"
+                               if( options["add-g01"].as<bool>() )
+                                   of << "G01 ";
+                                of << "X" << ( iter->first - xoffsetTot ) * cfactor << " Y"
                                    << ( iter->second - yoffsetTot ) * cfactor << '\n';
 
                                 if (bBridges && currentBridge != bridges.end())
@@ -325,8 +327,12 @@ void NGC_Exporter::export_layer(shared_ptr<Layer> layer, string of_name)
                                 of << leveller->addChainPoint( icoordpair( ( iter->first - xoffsetTot ) * cfactor,
                                                                            ( iter->second - yoffsetTot ) * cfactor ) );
                             else
-                                of << "G01 X" << ( iter->first - xoffsetTot ) * cfactor << " Y"
+                            {
+                                if( options["add-g01"].as<bool>() )
+                                    of << "G01 ";
+                                of << "X" << ( iter->first - xoffsetTot ) * cfactor << " Y"
                                    << ( iter->second - yoffsetTot ) * cfactor << '\n';
+                            }
                         }
 
                         last = iter;
