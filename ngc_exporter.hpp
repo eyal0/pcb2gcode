@@ -81,6 +81,7 @@ protected:
     double cfactor;         //imperial/metric conversion factor for output file
     bool bMetricinput;      //if true, input parameters are in metric units
     bool bMetricoutput;     //if true, metric g-code output
+    bool bAddG01;           //if true, add G01 before all liner feedrate movement
     bool bBridges;
     const unsigned int dpi;
     const double quantization_error;

@@ -127,6 +127,7 @@ private:
     const bool drillfront;
     const bool mirror_absolute;
     const bool bMetricOutput;   //Flag to indicate metric output
+    const bool bAddG01;         //add G01 before all linear feedrate movement
     const double quantization_error;
     const double xoffset;
     const double yoffset;
