@@ -69,7 +69,6 @@ autoleveller::autoleveller( const boost::program_options::variables_map &options
     quantization_error( quantization_error * cfactor ),
     xoffset( xoffset ),
     yoffset( yoffset ),
-    bExplicitG01( options["explicit-g01"].as<bool>() ),
     g01InterpolatedNum( ocodes->getUniqueCode() ),
     yProbeNum( ocodes->getUniqueCode() ),
     xProbeNum( ocodes->getUniqueCode() ),
@@ -211,8 +210,6 @@ void autoleveller::header( std::ofstream &of )
             while (j <= numYPoints - 1)
             {
                 of << "G0 Z" << zprobe << '\n';
-                if( bExplicitG01 )
-                    of << "G01 ";
                 of << "X" << i * XProbeDist + startPointX << " Y" << j * YProbeDist + startPointY << '\n';
                 of << probeCodeCustom << " Z" << zfail << " F" << feedrate << '\n';
                 of << getVarName(i, j) << "=" << zProbeResultVarCustom << '\n';
@@ -327,8 +324,6 @@ string autoleveller::addChainPoint ( icoordpair point )
         for( i = subsegments.begin(); i != subsegments.end(); i++ )
         {
             outputStr += interpolatePoint( *i );
-            if( bExplicitG01 )
-                outputStr += "G01 ";
             outputStr += str( format( "X%1$.5f Y%2$.5f Z[#3+#4]\n" ) % i->first % i->second );
         }
 

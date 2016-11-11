@@ -124,7 +124,6 @@ public:
     const double quantization_error;
     const double xoffset;
     const double yoffset;
-    const bool bExplicitG01;    //add G01 before all linear feedrate movement
 
     //Number of the g01 interpolated macro
     const unsigned int g01InterpolatedNum;
