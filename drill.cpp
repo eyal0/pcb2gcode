@@ -70,7 +70,7 @@ ExcellonProcessor::ExcellonProcessor(const boost::program_options::variables_map
       drillfront(workSide(options, "drill")),
       mirror_absolute(options["mirror-absolute"].as<bool>()),
       bMetricOutput(options["metricoutput"].as<bool>()),
-      bAddG01(options["add-g01"].as<bool>()),
+      bExplicitG01(options["explicit-g01"].as<bool>()),
       quantization_error(2.0 / options["dpi"].as<int>()),
       xoffset(options["zero-start"].as<bool>() ? min.first : 0),
       yoffset(options["zero-start"].as<bool>() ? min.second : 0),
@@ -283,7 +283,7 @@ void ExcellonProcessor::export_ngc(const string of_dir, const string of_name, sh
                     }
                     else
                     {
-                        if( bAddG01 )
+                        if( bExplicitG01 )
                             of << "G01 ";
                         of << "X"
                            << ( get_xvalue(coord_iter->first) - xoffsetTot )
