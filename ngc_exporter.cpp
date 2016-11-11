@@ -70,7 +70,7 @@ void NGC_Exporter::export_all(boost::program_options::variables_map& options)
     bMetricoutput = options["metricoutput"].as<bool>();      //set flag for metric output
     bFrontAutoleveller = options["al-front"].as<bool>();
     bBackAutoleveller = options["al-back"].as<bool>();
-    bAddG01 = options["add-g01"].as<bool>();
+    bExplicitG01 = options["explicit-g01"].as<bool>();
     string outputdir = options["output-dir"].as<string>();
     
     //set imperial/metric conversion factor for output coordinates depending on metricoutput option
@@ -263,7 +263,7 @@ void NGC_Exporter::export_layer(shared_ptr<Layer> layer, string of_name)
                                     || peek == path->end()   //Last
                                     || !aligned(last, iter, peek) )      //Not aligned
                             {
-                                if( bAddG01 )
+                                if( bExplicitG01 )
                                     of << "G01 ";
                                 of << "X" << ( iter->first - xoffsetTot ) * cfactor << " Y"
                                    << ( iter->second - yoffsetTot ) * cfactor << '\n';
@@ -329,7 +329,7 @@ void NGC_Exporter::export_layer(shared_ptr<Layer> layer, string of_name)
                                                                            ( iter->second - yoffsetTot ) * cfactor ) );
                             else
                             {
-                                if( bAddG01 )
+                                if( bExplicitG01 )
                                     of << "G01 ";
                                 of << "X" << ( iter->first - xoffsetTot ) * cfactor << " Y"
                                    << ( iter->second - yoffsetTot ) * cfactor << '\n';
