@@ -64,15 +64,12 @@ public:
         {
             list<T> temp_path (path.begin(), path.end());
             vector<T> newpath;
-            vector<double> distances;
-            list<pair<vector<double>::iterator, typename list<T>::iterator> > nearestPoints;
             double original_length;
             double new_length;
             double minDistance;
             unsigned int size = path.size();
 
             //Reserve memory
-            distances.reserve(size);
             newpath.reserve(size);
 
             new_length = 0;
@@ -86,43 +83,20 @@ public:
             while (temp_path.size() > 1)
             {
 
+                minDistance = boost::geometry::comparable_distance(currentPoint, get(*(temp_path.begin())));
+                auto nearestPoint = temp_path.begin();
                 //Compute all the distances
-                for (auto i = temp_path.begin(); i != temp_path.end(); i++)
-                    distances.push_back(boost::geometry::comparable_distance(currentPoint, get(*i)));
-
-                //Find the minimum distance
-                minDistance = *min_element(distances.begin(), distances.end());
-
-                //Find all the minimum distance points and copy their iterators in nearestPoints
-                auto point = temp_path.begin();
-                for (auto dist = distances.begin(); dist != distances.end(); dist++)
-                {
-                    if (*dist - minDistance <= 2 * quantization_error)
-                    {
-                        nearestPoints.push_front(make_pair(dist, point));
+                for (auto i = temp_path.begin(); i != temp_path.end(); i++) {
+                    if (boost::geometry::comparable_distance(currentPoint, get(*i)) < minDistance) {
+                        minDistance = boost::geometry::comparable_distance(currentPoint, get(*i));
+                        nearestPoint = i;
                     }
-                    ++point;
                 }
 
-                typename list<pair<vector<double>::iterator, typename list<T>::iterator> >::iterator chosenPoint;
-                if (nearestPoints.size() == 1)
-                {
-                    //Simplest case: the minimum distance point is unique; just copy it into newpath
-                    chosenPoint = nearestPoints.begin();
-                }
-                else
-                {
-                    //More complex case: we have multiple minimum distance points (like in a grid); we have
-                    //to choose one of them
-                    chosenPoint = nearestPoints.begin(); //TODO choose it in a smarter way
-                }
-
-                new_length += boost::geometry::distance(currentPoint, get(*(chosenPoint->second))); //Update the new path total length
-                newpath.push_back(*(chosenPoint->second)); //Copy the chosen point into newpath
-                currentPoint = get(*(chosenPoint->second));        //Set the next currentPoint to the chosen point
-                temp_path.erase(chosenPoint->second);           //Remove the chosen point from the path list
-                distances.clear();                          //Clear the distances vector
-                nearestPoints.clear();                      //Clear the nearestPoints vector
+                new_length += boost::geometry::distance(currentPoint, get(*(nearestPoint))); //Update the new path total length
+                newpath.push_back(*(nearestPoint)); //Copy the chosen point into newpath
+                currentPoint = get(*(nearestPoint));        //Set the next currentPoint to the chosen point
+                temp_path.erase(nearestPoint);           //Remove the chosen point from the path list
             }
 
             newpath.push_back(temp_path.front());    //Copy the last point into newpath
