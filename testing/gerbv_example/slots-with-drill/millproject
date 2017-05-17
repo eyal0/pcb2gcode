@@ -1,6 +1,4 @@
-back=multivibrator-B.Cu.gbr
-drill=multivibrator.drl
-outline=multivibrator-Edge.Cuts.gbr
+drill=slots.drl
 
 vectorial=true
 mill-feed=360
@@ -10,15 +8,16 @@ zwork=-0.04
 drill-feed=30
 drill-side=auto
 drill-speed=12000
-milldrill=true
+milldrill=false
 onedrill=true
 zdrill=-1.6
 cut-feed=100
-cut-infeed=100
+cut-infeed=0.03
 cut-side=auto
 cut-speed=10000
 cutter-diameter=0.0314961
-milldrill-diameter=0.0314961
+milldrill-diameter=0.04
+#milldrill-diameter=0.0314961
 zbridges=-0.010
 bridges=0.2
 zcut=-0.13
