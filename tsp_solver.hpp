@@ -56,6 +56,13 @@ private:
         return get(line.first);
     }
 
+    // Return the Chebyshev distance, which is a good approximation
+    // for the time it takes to do a rapid move on a CNC router.
+    static inline double distance(icoordpair p0, icoordpair p1)
+    {
+        return std::max(std::abs(p0.first - p1.first),
+                        std::abs(p0.second - p1.second));
+    }
 public:
     // This function computes the optimised path of a
     //  * icoordpair
@@ -82,32 +89,32 @@ public:
             new_length = 0;
 
             //Find the original path length
-            original_length = boost::geometry::distance(startingPoint, get(temp_path.front()));
+            original_length = distance(startingPoint, get(temp_path.front()));
             for (auto point = temp_path.begin(); next(point) != temp_path.end(); point++)
-                original_length += boost::geometry::distance(get(*point), get(*next(point)));
+                original_length += distance(get(*point), get(*next(point)));
 
             icoordpair currentPoint = startingPoint;
             while (temp_path.size() > 1)
             {
 
-                minDistance = boost::geometry::comparable_distance(currentPoint, get(*(temp_path.begin())));
+                minDistance = distance(currentPoint, get(*(temp_path.begin())));
                 auto nearestPoint = temp_path.begin();
                 //Compute all the distances
                 for (auto i = temp_path.begin(); i != temp_path.end(); i++) {
-                    if (boost::geometry::comparable_distance(currentPoint, get(*i)) < minDistance) {
-                        minDistance = boost::geometry::comparable_distance(currentPoint, get(*i));
+                    if (distance(currentPoint, get(*i)) < minDistance) {
+                        minDistance = distance(currentPoint, get(*i));
                         nearestPoint = i;
                     }
                 }
 
-                new_length += boost::geometry::distance(currentPoint, get(*(nearestPoint))); //Update the new path total length
+                new_length += distance(currentPoint, get(*(nearestPoint))); //Update the new path total length
                 newpath.push_back(*(nearestPoint)); //Copy the chosen point into newpath
                 currentPoint = get(*(nearestPoint));        //Set the next currentPoint to the chosen point
                 temp_path.erase(nearestPoint);           //Remove the chosen point from the path list
             }
 
             newpath.push_back(temp_path.front());    //Copy the last point into newpath
-            new_length += boost::geometry::distance(currentPoint, get(temp_path.front())); //Compute the distance and add it to new_length
+            new_length += distance(currentPoint, get(temp_path.front())); //Compute the distance and add it to new_length
 
             if (new_length < original_length)  //If the new path is better than the previous one
                 path = newpath;
@@ -127,10 +134,10 @@ public:
                 for (auto c = b+1; c+1 < path.end(); c++) {
                     auto d = c+1;
                     // Should we make this 2opt swap?
-                    if (boost::geometry::distance(get(*a), get(*b)) +
-                        boost::geometry::distance(get(*c), get(*d)) >
-                        boost::geometry::distance(get(*a), get(*c)) +
-                        boost::geometry::distance(get(*b), get(*d))) {
+                    if (distance(get(*a), get(*b)) +
+                        distance(get(*c), get(*d)) >
+                        distance(get(*a), get(*c)) +
+                        distance(get(*b), get(*d))) {
                         // Do the 2opt swap.
                         std::reverse(b,d);
                         found_one = true;
