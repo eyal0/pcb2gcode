@@ -137,12 +137,6 @@ vector<shared_ptr<icoords>> Surface_vectorial::get_toolpath(shared_ptr<RoutingMi
           debug_image.add(polygon, 0.6, r, g, b);
           traced_debug_image.add(polygon, 1, r, g, b);
         }
-        // The polygon is made of rings.  We want to look for rings such that
-        // one is entirely inside the other and they have a spot where the
-        // distance between them is less than the width of the milling tool.
-        // Those are rings that we can mill in a single plunge without lifting
-        // the tool.
-
     }
 
     srand(1);
@@ -330,12 +324,46 @@ bool Surface_vectorial::attach_ring(const ring_type_fp& ring, linestring_type_fp
 // to the list of toolpaths.
 void Surface_vectorial::attach_ring(const ring_type_fp& ring, multi_linestring_type_fp& toolpaths,
                                     const coordinate_type_fp& max_distance) {
-  for (auto& toolpath : toolpaths) {
-    if (attach_ring(ring, toolpath, max_distance)) {
-      return;
+  if (ring.size() == 0) {
+    return;
+  }
+  if (toolpaths.size() == 0) {
+    toolpaths.push_back(linestring_type_fp(ring.begin(), ring.end()));
+    return;
+  }
+  bool insert_at_front = true;
+  auto best_ring_point = ring.begin();
+  auto best_toolpath = toolpaths.begin();
+  double best_distance = bg::comparable_distance(*best_ring_point, best_toolpath->front());
+  for (auto toolpath = toolpaths.begin(); toolpath < toolpaths.end(); toolpath++) {
+    for (auto ring_point = ring.begin(); ring_point != ring.end(); ring_point++) {
+      if (bg::comparable_distance(*ring_point, toolpath->front()) < best_distance) {
+        best_distance = bg::comparable_distance(*ring_point, toolpath->front());
+        best_ring_point = ring_point;
+        insert_at_front = true;
+        best_toolpath = toolpath;
+      }
+      if (bg::comparable_distance(*ring_point, toolpath->back()) < best_distance) {
+        best_distance = bg::comparable_distance(*ring_point, toolpath->back());
+        best_ring_point = ring_point;
+        insert_at_front = false;
+        best_toolpath = toolpath;
+      }
     }
   }
-  toolpaths.push_back(linestring_type_fp(ring.begin(), ring.end()));
+  if (bg::distance(*best_ring_point,
+                   insert_at_front ? best_toolpath->front() : best_toolpath->back()) >= max_distance) {
+    toolpaths.push_back(linestring_type_fp(ring.begin(), ring.end()));
+    return;
+  }
+  best_toolpath->resize(best_toolpath->size() + ring.size()); // Make space for the ring.
+  auto insertion_point = best_toolpath->end() - ring.size(); // Insert at the end
+  if (insert_at_front) {
+    std::move_backward(best_toolpath->begin(), insertion_point, best_toolpath->end());
+    insertion_point = best_toolpath->begin();
+  }
+  auto close_ring_point = std::rotate_copy(ring.begin(), best_ring_point, std::prev(ring.end()), insertion_point);
+  *close_ring_point = *best_ring_point;
 }
 
 // Given polygons, attach all the rings inside to the toolpaths.
