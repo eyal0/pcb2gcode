@@ -67,16 +67,11 @@ public:
                         const double min_y) const;
 
     virtual multi_polygon_type_fp render(bool fill_closed_lines, unsigned int points_per_circle = 30) const;
-  virtual inline unsigned int vectorial_scale() const {
-    return scale;
-  }
 
     virtual ~GerberImporter();
 
 protected:
     enum Side { FRONT = 0, BACK = 1 } side;
-
-    static const unsigned int scale;
 
 private:
     gerbv_project_t* project;

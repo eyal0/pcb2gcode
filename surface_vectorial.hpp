@@ -88,7 +88,7 @@ protected:
   const MillFeedDirection::MillFeedDirection mill_feed_direction;
 
   shared_ptr<multi_polygon_type_fp> vectorial_surface;
-  coordinate_type_fp scale;
+  coordinate_type_fp scale = 1000000;
   box_type_fp bounding_box;
 
   shared_ptr<Surface_vectorial> mask;

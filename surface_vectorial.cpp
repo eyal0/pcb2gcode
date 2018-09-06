@@ -69,8 +69,13 @@ void Surface_vectorial::render(shared_ptr<VectorialLayerImporter> importer) {
          << " g-code output and/or fix your gerber files!\n";
   }
 
-  scale = importer->vectorial_scale();
-
+  {
+    multi_polygon_type_fp scaled;
+    bg::transform(vectorial_surface_not_simplified, scaled,
+                  bg::strategy::transform::scale_transformer<coordinate_type_fp, 2, 2>(
+                      1000000, 1000000));
+    vectorial_surface_not_simplified = scaled;
+  }
   //With a very small loss of precision we can reduce memory usage and processing time
   bg::simplify(vectorial_surface_not_simplified, *vectorial_surface, scale / 10000);
   bg::envelope(*vectorial_surface, bounding_box);
