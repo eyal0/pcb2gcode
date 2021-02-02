@@ -123,11 +123,17 @@ PathFindingSurface::PathFindingSurface(const optional<multi_polygon_type_fp>& ke
     multi_polygon_type_fp total_keep_in = *keep_in - keep_out;
 
     total_keep_in_grown.emplace();
+    total_keep_in_grown_bounding_boxes.emplace();
     for (const auto& poly : total_keep_in) {
       all_vertices.emplace_back(poly.outer().cbegin(), poly.outer().cend());
       total_keep_in_grown->emplace_back(
           bg_helpers::buffer_miter(poly.outer(), tolerance),
           vector<multi_polygon_type_fp>());
+      total_keep_in_grown->back().second.reserve(poly.inners().size());
+      total_keep_in_grown_bounding_boxes->emplace_back(
+          boxes<polygon_bounding_box_type_fp>(total_keep_in_grown->back().first),
+          vector<multi_polygon_bounding_box_type_fp>());
+      total_keep_in_grown_bounding_boxes->back().second.reserve(poly.inners().size());
       for (const auto& inner : poly.inners()) {
         all_vertices.emplace_back(inner.cbegin(), inner.cend());
         // Because the inner is reversed, we need to reverse it so
@@ -137,6 +143,8 @@ PathFindingSurface::PathFindingSurface(const optional<multi_polygon_type_fp>& ke
         // tolerance needs to be inverted because growing a shape
         // shrinks the holes in it.
         total_keep_in_grown->back().second.push_back(bg_helpers::buffer_miter(temp_inner, -tolerance));
+        total_keep_in_grown_bounding_boxes->back().second.push_back(
+            boxes<polygon_bounding_box_type_fp>(total_keep_in_grown->back().second.back()));
       }
     }
   } else {
@@ -145,6 +153,11 @@ PathFindingSurface::PathFindingSurface(const optional<multi_polygon_type_fp>& ke
       keep_out_shrunk.emplace_back(
           bg_helpers::buffer_miter(poly.outer(), -tolerance),
           vector<multi_polygon_type_fp>());
+      keep_out_shrunk.back().second.reserve(poly.inners().size());
+      keep_out_shrunk_bounding_boxes.emplace_back(
+          boxes<polygon_bounding_box_type_fp>(keep_out_shrunk.back().first),
+          vector<multi_polygon_bounding_box_type_fp>());
+      keep_out_shrunk_bounding_boxes.back().second.reserve(poly.inners().size());
       for (const auto& inner : poly.inners()) {
         all_vertices.emplace_back(inner.cbegin(), inner.cend());
         // Because the inner is reversed, we need to reverse it so
@@ -154,6 +167,8 @@ PathFindingSurface::PathFindingSurface(const optional<multi_polygon_type_fp>& ke
         // tolerance needs to be inverted because shrinking a shape
         // grows the holes in it.
         keep_out_shrunk.back().second.push_back(bg_helpers::buffer_miter(temp_inner, tolerance));
+        keep_out_shrunk_bounding_boxes.back().second.push_back(
+            boxes<polygon_bounding_box_type_fp>(keep_out_shrunk.back().second.back()));
       }
     }
   }
@@ -165,16 +180,21 @@ PathFindingSurface::PathFindingSurface(const optional<multi_polygon_type_fp>& ke
 }
 
 vector<size_t> inside_multipolygon(const point_type_fp& p,
-                                   const multi_polygon_type_fp& mp) {
+                                   const multi_polygon_type_fp& mp,
+                                   const multi_polygon_bounding_box_type_fp& mp_box) {
   size_t current_ring_index = 0;
-  for (const auto& poly : mp) {
-    if (point_in_ring(p, poly.outer())) {
+  for (size_t poly_index = 0; poly_index < mp.size(); poly_index++) {
+    const auto& poly = mp[poly_index];
+    const auto& poly_box = mp_box[poly_index];
+    if (point_in_ring(p, poly.outer(), poly_box.first)) {
       // Might be part of this shape but only if the point isn't in
       // the inners.
       vector<size_t> ring_indices{current_ring_index};
       current_ring_index++;
-      for (const auto& inner : poly.inners()) {
-        if (!point_in_ring(p, inner)) {
+      for (size_t inner_index = 0; inner_index < poly.inners().size(); inner_index++) {
+        const auto& inner = poly.inners()[inner_index];
+        const auto& inner_box = poly_box.second[inner_index];
+        if (!point_in_ring(p, inner, inner_box)) {
           // We'll have to make sure not to cross this inner.
           ring_indices.push_back(current_ring_index);
           current_ring_index++;
@@ -199,17 +219,21 @@ vector<size_t> inside_multipolygon(const point_type_fp& p,
 }
 
 vector<size_t> outside_multipolygon(const point_type_fp& p,
-                                    const multi_polygon_type_fp& mp) {
+                                    const multi_polygon_type_fp& mp,
+                                    const multi_polygon_bounding_box_type_fp& mp_box) {
   vector<size_t> ring_indices;
   size_t current_ring_index = 0;
-  for (const auto& poly : mp) {
-    if (point_in_ring(p, poly.outer())) {
+  for (size_t poly_index = 0; poly_index < mp.size(); poly_index++) {
+    const auto& poly = mp[poly_index];
+    const auto& poly_box = mp_box[poly_index];
+    if (point_in_ring(p, poly.outer(), poly_box.first)) {
       // We're inside the outer, maybe we're in an inner?  If not, we
       // aren't outside at all and we'll just give up.
       bool in_inner = false;
       for (size_t i = 0; i < poly.inners().size(); i++) {
         const auto& inner = poly.inners()[i];
-        if (point_in_ring(p, inner)) {
+        const auto& inner_box = poly_box.second[i];
+        if (point_in_ring(p, inner, inner_box)) {
           in_inner = true;
           ring_indices.push_back(current_ring_index + i + 1);
           break;
@@ -234,18 +258,23 @@ vector<size_t> outside_multipolygon(const point_type_fp& p,
 
 RingIndices inside_multipolygons(
     const point_type_fp& p,
-    const nested_multipolygon_type_fp& mp){
+    const nested_multipolygon_type_fp& mp,
+    const nested_multi_polygon_bounding_box_type_fp& mp_box) {
   size_t current_ring_index = 0;
-  for (const auto& poly : mp) {
+  for (size_t poly_index = 0; poly_index < mp.size(); poly_index++) {
+    const auto& poly = mp[poly_index];
+    const auto& poly_box = mp_box[poly_index];
     // The loop always starts on an outer.
-    auto inside_mp = inside_multipolygon(p, poly.first);
+    auto inside_mp = inside_multipolygon(p, poly.first, poly_box.first);
     if (inside_mp.size() > 0) {
       // Might be part of this shape but only if the point isn't in
       // the inners.
       RingIndices ring_indices{{current_ring_index, inside_mp}};
       current_ring_index++;
-      for (const auto& inner : poly.second) {
-        auto outside_mp = outside_multipolygon(p, inner);
+      for (size_t i = 0; i < poly.second.size(); i++) {
+        const auto& inner = poly.second[i];
+        const auto& inner_box = poly_box.second[i];
+        auto outside_mp = outside_multipolygon(p, inner, inner_box);
         if (outside_mp.size() > 0) {
           // We'll have to make sure not to cross this inner.
           ring_indices.push_back({current_ring_index, outside_mp});
@@ -273,18 +302,22 @@ RingIndices inside_multipolygons(
 
 RingIndices outside_multipolygons(
     const point_type_fp& p,
-    const nested_multipolygon_type_fp& mp) {
+    const nested_multipolygon_type_fp& mp,
+    const nested_multi_polygon_bounding_box_type_fp& mp_box) {
   RingIndices ring_indices;
   size_t current_ring_index = 0;
-  for (const auto& poly : mp) {
-    auto outside_mp = outside_multipolygon(p, poly.first);
+  for (size_t poly_index = 0; poly_index < mp.size(); poly_index++) {
+    const auto& poly = mp[poly_index];
+    const auto& poly_box = mp_box[poly_index];
+    auto outside_mp = outside_multipolygon(p, poly.first, poly_box.first);
     if (outside_mp.size() == 0) {
       // We're inside the outer, maybe we're in an inner?  If not, we
       // aren't outside at all and we'll just give up.
       bool in_inner = false;
       for (size_t i = 0; i < poly.second.size(); i++) {
         const auto& inner = poly.second[i];
-        auto inside_mp = inside_multipolygon(p, inner);
+        const auto& inner_box = poly_box.second[i];
+        auto inside_mp = inside_multipolygon(p, inner, inner_box);
         if (inside_mp.size() > 0) {
           in_inner = true;
           ring_indices.push_back({current_ring_index + i + 1, inside_mp});
@@ -317,9 +350,9 @@ RingIndices outside_multipolygons(
    in the path and also for the collision detection. */
 RingIndices PathFindingSurface::in_surface(point_type_fp p) const {
   if (total_keep_in_grown) {
-    return inside_multipolygons(p, *total_keep_in_grown);
+    return inside_multipolygons(p, *total_keep_in_grown, *total_keep_in_grown_bounding_boxes);
   } else {
-    return outside_multipolygons(p, keep_out_shrunk);
+    return outside_multipolygons(p, keep_out_shrunk, keep_out_shrunk_bounding_boxes);
   }
 }
 

@@ -80,7 +80,13 @@ extern inline bool is_intersecting(const point_type_fp& p0, const point_type_fp&
 class PathFindingSurface;
 
 // From: http://geomalgorithms.com/a03-_inclusion.html
-extern inline bool point_in_ring(const point_type_fp& point, const ring_type_fp& ring) {
+extern inline bool point_in_ring(const point_type_fp& point,
+                                 const ring_type_fp& ring,
+                                 const box_type_fp& box) {
+  if (!bg::covered_by(point, box)) {
+    // If it's not in the box then it's definitely not in the ring.
+    return false;
+  }
   int winding_number = 0;
 
   // loop through all edges of the polygon
@@ -103,19 +109,47 @@ extern inline bool point_in_ring(const point_type_fp& point, const ring_type_fp&
 }
 
 using nested_multipolygon_type_fp = std::vector<std::pair<multi_polygon_type_fp, std::vector<multi_polygon_type_fp>>>;
-
+using polygon_bounding_box_type_fp = std::pair<box_type_fp, std::vector<box_type_fp>>;
+using multi_polygon_bounding_box_type_fp = std::vector<polygon_bounding_box_type_fp>;
+using nested_multi_polygon_bounding_box_type_fp = std::vector<std::pair<multi_polygon_bounding_box_type_fp,
+                                                                        std::vector<multi_polygon_bounding_box_type_fp>>>;
 using RingIndices = std::vector<std::pair<size_t, std::vector<size_t>>>;
 
+extern inline box_type_fp box(const ring_type_fp& ring) {
+  return bg::return_envelope<box_type_fp>(ring);
+}
+
+template <typename T, typename U>
+extern inline std::vector<T> boxes(const U& inputs);
+
+extern inline polygon_bounding_box_type_fp box(const polygon_type_fp& poly) {
+  return polygon_bounding_box_type_fp{box(poly.outer()), boxes<box_type_fp>(poly.inners())};
+}
+
+template <typename T, typename U>
+extern inline std::vector<T> boxes(const U& inputs) {
+  std::vector<T> ret;
+  ret.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    ret.push_back(box(input));
+  }
+  return ret;
+}
+
 std::vector<size_t> inside_multipolygon(const point_type_fp& p,
-                                        const multi_polygon_type_fp& mp);
+                                        const multi_polygon_type_fp& mp,
+                                        const multi_polygon_bounding_box_type_fp& mp_box);
 std::vector<size_t> outside_multipolygon(const point_type_fp& p,
-                                         const multi_polygon_type_fp& mp);
+                                         const multi_polygon_type_fp& mp,
+                                         const multi_polygon_bounding_box_type_fp& mp_box);
 RingIndices inside_multipolygons(
     const point_type_fp& p,
-    const nested_multipolygon_type_fp& mp);
+    const nested_multipolygon_type_fp& mp,
+    const nested_multi_polygon_bounding_box_type_fp& mp_box);
 RingIndices outside_multipolygons(
     const point_type_fp& p,
-    const nested_multipolygon_type_fp& mp);
+    const nested_multipolygon_type_fp& mp,
+    const nested_multi_polygon_bounding_box_type_fp& mp_box);
 
 // Given a target location and a potential path length to get there, determine
 // if it still makes sense to follow the path.  Return true if it does,
@@ -192,8 +226,9 @@ class PathFindingSurface {
   // outer.  This is later used for computing the inside/outside of
   // each shape.
   boost::optional<nested_multipolygon_type_fp> total_keep_in_grown;
+  boost::optional<nested_multi_polygon_bounding_box_type_fp> total_keep_in_grown_bounding_boxes;
   nested_multipolygon_type_fp keep_out_shrunk;
-
+  nested_multi_polygon_bounding_box_type_fp keep_out_shrunk_bounding_boxes;
   // all_vertices is one list for each ring in the original.  The list
   // are in DFS order of the original poly, with outer before inners.
   std::vector<std::vector<point_type_fp>> all_vertices;

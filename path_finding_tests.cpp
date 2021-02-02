@@ -105,15 +105,17 @@ BOOST_AUTO_TEST_CASE(point_in_ring_tests) {
     point_type_fp{10,0},
     point_type_fp{0,0},
   };
-  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{5,5}, ring), true);
-  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{0,-1}, ring), false);
-  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{-1,0}, ring), false);
-  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{0,11}, ring), false);
-  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{-1,10}, ring), false);
-  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{-1,5}, ring), false);
-  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{1,5}, ring), true);
-  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{9,5}, ring), true);
-  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{11,5}, ring), false);
+  box_type_fp bbox = box(ring);
+
+  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{5,5}, ring, bbox), true);
+  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{0,-1}, ring, bbox), false);
+  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{-1,0}, ring, bbox), false);
+  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{0,11}, ring, bbox), false);
+  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{-1,10}, ring, bbox), false);
+  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{-1,5}, ring, bbox), false);
+  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{1,5}, ring, bbox), true);
+  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{9,5}, ring, bbox), true);
+  BOOST_CHECK_EQUAL(point_in_ring(point_type_fp{11,5}, ring, bbox), false);
 }
 
 BOOST_AUTO_TEST_SUITE(inside_multipolygon_tests)
@@ -122,8 +124,9 @@ BOOST_AUTO_TEST_CASE(box) {
   multi_polygon_type_fp mp;
   box_type_fp box{point_type_fp{0,0}, {10,10}};
   bg::convert(box, mp);
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{1,1}, mp), std::vector<size_t>{0});
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{11,11}, mp), std::vector<size_t>{});
+  const auto bbox = boxes<polygon_bounding_box_type_fp>(mp);
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{1,1}, mp, bbox), std::vector<size_t>{0});
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{11,11}, mp, bbox), std::vector<size_t>{});
 }
 
 BOOST_AUTO_TEST_CASE(doughnuts) {
@@ -144,12 +147,13 @@ BOOST_AUTO_TEST_CASE(doughnuts) {
   hole = {point_type_fp{26,6}, {28,8}};
   bg::convert(hole, hole_mp);
   mp = mp - hole_mp;
-  
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{1,1}, mp), (std::vector<size_t>{0,1}));
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{11,11}, mp), std::vector<size_t>{});
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{5,5}, mp), std::vector<size_t>{});
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{21,1}, mp), (std::vector<size_t>{2,3,4}));
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{23.5,3.5}, mp), std::vector<size_t>{});
+
+  const auto bbox = boxes<polygon_bounding_box_type_fp>(mp);
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{1,1}, mp, bbox), (std::vector<size_t>{0,1}));
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{11,11}, mp, bbox), std::vector<size_t>{});
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{5,5}, mp, bbox), std::vector<size_t>{});
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{21,1}, mp, bbox), (std::vector<size_t>{2,3,4}));
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{23.5,3.5}, mp, bbox), std::vector<size_t>{});
 }
 
 BOOST_AUTO_TEST_CASE(nested_doughnuts) {
@@ -168,10 +172,11 @@ BOOST_AUTO_TEST_CASE(nested_doughnuts) {
   bg::convert(hole, hole_mp);
   mp = mp - hole_mp;
 
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{1,1}, mp), (std::vector<size_t>{0,1}));
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{11,11}, mp), std::vector<size_t>{});
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{21,21}, mp), (std::vector<size_t>{2,3}));
-  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{31,31}, mp), (std::vector<size_t>{}));
+  const auto bbox = boxes<polygon_bounding_box_type_fp>(mp);
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{1,1}, mp, bbox), (std::vector<size_t>{0,1}));
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{11,11}, mp, bbox), std::vector<size_t>{});
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{21,21}, mp, bbox), (std::vector<size_t>{2,3}));
+  BOOST_CHECK_EQUAL(inside_multipolygon(point_type_fp{31,31}, mp, bbox), (std::vector<size_t>{}));
 }
 
 BOOST_AUTO_TEST_SUITE_END() // inside_multipolygon_tests
@@ -182,8 +187,9 @@ BOOST_AUTO_TEST_CASE(box) {
   multi_polygon_type_fp mp;
   box_type_fp box{point_type_fp{0,0}, {10,10}};
   bg::convert(box, mp);
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{1,1}, mp), std::vector<size_t>{});
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{11,11}, mp), (std::vector<size_t>{0,}));
+  const auto bbox = boxes<polygon_bounding_box_type_fp>(mp);
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{1,1}, mp, bbox), std::vector<size_t>{});
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{11,11}, mp, bbox), (std::vector<size_t>{0,}));
 }
 
 BOOST_AUTO_TEST_CASE(doughnuts) {
@@ -204,12 +210,13 @@ BOOST_AUTO_TEST_CASE(doughnuts) {
   hole = {point_type_fp{26,6}, {28,8}};
   bg::convert(hole, hole_mp);
   mp = mp - hole_mp;
-  
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{1,1}, mp), (std::vector<size_t>{}));
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{11,11}, mp), (std::vector<size_t>{0,2}));
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{5,5}, mp), (std::vector<size_t>{1,2}));
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{21,1}, mp), (std::vector<size_t>{}));
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{23.5,3.5}, mp), (std::vector<size_t>{0,3}));
+
+  const auto bbox = boxes<polygon_bounding_box_type_fp>(mp);
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{1,1}, mp, bbox), (std::vector<size_t>{}));
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{11,11}, mp, bbox), (std::vector<size_t>{0,2}));
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{5,5}, mp, bbox), (std::vector<size_t>{1,2}));
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{21,1}, mp, bbox), (std::vector<size_t>{}));
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{23.5,3.5}, mp, bbox), (std::vector<size_t>{0,3}));
 }
 
 BOOST_AUTO_TEST_CASE(nested_doughnuts) {
@@ -228,10 +235,11 @@ BOOST_AUTO_TEST_CASE(nested_doughnuts) {
   bg::convert(hole, hole_mp);
   mp = mp - hole_mp;
 
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{1,1}, mp), (std::vector<size_t>{}));
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{11,11}, mp), (std::vector<size_t>{1,2}));
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{21,21}, mp), (std::vector<size_t>{}));
-  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{31,31}, mp), (std::vector<size_t>{1,3}));
+  const auto bbox = boxes<polygon_bounding_box_type_fp>(mp);
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{1,1}, mp, bbox), (std::vector<size_t>{}));
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{11,11}, mp, bbox), (std::vector<size_t>{1,2}));
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{21,21}, mp, bbox), (std::vector<size_t>{}));
+  BOOST_CHECK_EQUAL(outside_multipolygon(point_type_fp{31,31}, mp, bbox), (std::vector<size_t>{1,3}));
 }
 
 BOOST_AUTO_TEST_SUITE_END() // outside_multipolygon_tests
