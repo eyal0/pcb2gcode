@@ -421,6 +421,26 @@ BOOST_AUTO_TEST_CASE(tolerance_with_unit) {
                     ERR_OK);
 }
 
+BOOST_AUTO_TEST_CASE(mirror_yaxis_flag) {
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile", "mirror-yaxis"), false);
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile --mirror-yaxis", "mirror-yaxis"),
+                    true);
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --mirror-yaxis --noconfigfile", "mirror-yaxis"),
+                    true);
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile --mirror-yaxis=false",
+                                    "mirror-yaxis"),
+                    false);
+  // The value can also be the next argument.
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile --mirror-yaxis false",
+                                    "mirror-yaxis"),
+                    false);
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile --mirror-yaxis true --zsafe=1mm",
+                                    "mirror-yaxis"),
+                    true);
+  BOOST_CHECK_EQUAL(get_error_code("pcb2gcode --noconfigfile --mirror-yaxis board.gbr"),
+                    ERR_UNKNOWNPARAMETER);
+}
+
 json dump() {
   return json::parse(options::dump_options());
 }
@@ -646,7 +666,7 @@ BOOST_AUTO_TEST_CASE(dump_option_details) {
   BOOST_CHECK_EQUAL(find_option(dumped, "extra-passes")["deprecated"], true);
   BOOST_CHECK(!find_option(dumped, "extra-passes").contains("replaced_by"));
   BOOST_CHECK_EQUAL(find_option(dumped, "vectorial")["deprecated"], true);
-  BOOST_CHECK(!find_option(dumped, "mirror-yaxis").contains("implicit"));
+  BOOST_CHECK_EQUAL(find_option(dumped, "mirror-yaxis")["implicit"], "true");
 
   const json front = find_option(dumped, "front");
   BOOST_CHECK_EQUAL(front["path"], "input_file");

@@ -146,6 +146,13 @@ pcb2gcode_add_integration_script_test(
   "tests/data/gerbv_example/backtrack"
   PCB2GCODE_ARGS "--tolerance=0.05mm")
 
+# The millproject has mirror-yaxis=true, so the output matches expected/ only if
+# the flag without a value means true.
+pcb2gcode_add_integration_script_test(
+  integration_mirror_yaxis_flag
+  "tests/data/gerbv_example/example_board_new_mirror_y"
+  PCB2GCODE_ARGS "--mirror-yaxis")
+
 pcb2gcode_add_integration_script_test(
   integration_negative_spinup
   "tests/data/gerbv_example/am-test"

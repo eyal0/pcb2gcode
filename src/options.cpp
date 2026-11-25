@@ -605,7 +605,7 @@ options::options()
        ("mirror-absolute", po::value<bool>()->default_value(true)->implicit_value(true),
         "[DEPRECATED, must always be true] mirror back side along absolute zero instead of board center")
        ("mirror-axis", po::value<Length>()->default_value(Length(0)), "For two-sided boards, the PCB needs to be flipped along the axis x=VALUE")
-       ("mirror-yaxis", po::value<bool>()->default_value(false), "For two-sided boards, the PCB needs to be flipped along the y axis instead");
+       ("mirror-yaxis", po::value<bool>()->default_value(false)->implicit_value(true), "For two-sided boards, the PCB needs to be flipped along the y axis instead");
    add_group("alignment", "always", alignment_options);
 
    po::options_description cnc_options("CNC options, common to all the milling, drilling, and cutting");
