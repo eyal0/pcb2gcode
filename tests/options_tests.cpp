@@ -13,6 +13,7 @@ namespace po = boost::program_options;
 
 #include <regex>
 #include <set>
+#include <sstream>
 #include <utility>
 
 using namespace std;
@@ -110,6 +111,14 @@ BOOST_AUTO_TEST_CASE(milling_overlap) {
   BOOST_CHECK_THROW(
       (parse("pcb2gcode --milling-overlap 1rpm")),
       pcb2gcode_parse_exception);
+}
+
+BOOST_AUTO_TEST_CASE(bridges_need_a_width) {
+  BOOST_CHECK_EQUAL(get_value<unsigned int>("pcb2gcode --noconfigfile", "bridgesnum"), 0U);
+  BOOST_CHECK_EQUAL(get_value<unsigned int>("pcb2gcode --noconfigfile --bridges=1mm",
+                                            "bridgesnum"), 2U);
+  BOOST_CHECK_EQUAL(get_value<unsigned int>("pcb2gcode --noconfigfile --bridges=1mm "
+                                            "--bridgesnum=0", "bridgesnum"), 0U);
 }
 
 BOOST_AUTO_TEST_CASE(mcp_option) {
@@ -377,6 +386,7 @@ BOOST_AUTO_TEST_CASE(rule_errors_name_their_options) {
   BOOST_REQUIRE_EQUAL(errors.size(), 1U);
   BOOST_CHECK_EQUAL(errors[0].code, ERR_ZSAFELOWERZWORK);
   BOOST_CHECK(errors[0].options == (std::vector<std::string>{"zsafe", "zwork"}));
+  BOOST_CHECK_EQUAL(errors[0].rule, "greater:zsafe,zwork");
 }
 
 // The tolerance in inches, as pcb2gcode uses it.
@@ -717,6 +727,366 @@ BOOST_AUTO_TEST_CASE(format_values) {
               boost::make_optional(std::vector<string>{"0.000025"}));
   // pcb2gcode has no options of this type.
   BOOST_CHECK(!format_option_value(boost::any(1.5f)));
+}
+
+BOOST_AUTO_TEST_CASE(dump_rule_ids) {
+  const json dumped = dump();
+  std::set<string> ids;
+  for (const auto& rule : dumped["rules"]) {
+    BOOST_CHECK(ids.insert(rule["id"].get<string>()).second);
+    BOOST_CHECK_EQUAL(rule["id"], rule["kind"].get<string>() + ":" +
+                      boost::algorithm::join(rule["options"].get<std::vector<string>>(), ","));
+  }
+}
+
+// The exit code and the output of pcb2gcode --check-options with the words of
+// args.
+std::pair<int, json> check_options(const std::string& args) {
+  std::vector<std::string> words;
+  boost::split(words, args, boost::is_any_of(" "), boost::token_compress_on);
+  std::vector<const char*> argv;
+  for (const auto& word : words) {
+    argv.push_back(word.c_str());
+  }
+  cerr << endl << "Checking: " << args << endl;
+  std::ostringstream out;
+  const int code = options::check_options(static_cast<int>(argv.size()), argv.data(), out);
+  const json report = json::parse(out.str());
+  BOOST_CHECK_EQUAL(report["format_version"], 1);
+  return {code, report};
+}
+
+json error_json(const std::vector<string>& option_names, const string& rule,
+                const string& message, ErrorCodes code) {
+  return {{"options", option_names}, {"rule", rule}, {"message", message}, {"code", code}};
+}
+
+BOOST_AUTO_TEST_CASE(check_requested) {
+  const char* with[] = {"pcb2gcode", "--zsafe=1", "--check-options"};
+  BOOST_CHECK(options::check_requested(3, with));
+  const char* without[] = {"pcb2gcode", "--check-options=yes", "--zsafe=1"};
+  BOOST_CHECK(!options::check_requested(3, without));
+}
+
+BOOST_AUTO_TEST_CASE(check_options_without_problems) {
+  const auto checked =
+      check_options("pcb2gcode --check-options --noconfigfile --zsafe=5mm --zchange=10mm");
+  BOOST_CHECK_EQUAL(checked.first, ERR_OK);
+  BOOST_CHECK_EQUAL(checked.second["errors"], json::array());
+  BOOST_CHECK_EQUAL(checked.second["warnings"], json::array());
+}
+
+BOOST_AUTO_TEST_CASE(check_options_lists_every_error) {
+  const string args = "pcb2gcode --noconfigfile --zsafe=1mm --zchange=10mm --back=board.gbr "
+                      "--zwork=2mm --mill-speed=10000rpm";
+  const auto checked = check_options(args + " --check-options");
+  BOOST_CHECK_EQUAL(checked.first, ERR_NOMILLFEED);
+  const string missing_feed = "Missing --mill-feed, the milling feed rate. For example: "
+                              "--mill-feed=600mm/min";
+  const string zsafe_low = "--zsafe must be higher than --zwork.";
+  BOOST_CHECK_EQUAL(checked.second["errors"],
+                    json::array({error_json({"mill-feed"}, "required:mill-feed", missing_feed,
+                                            ERR_NOMILLFEED),
+                                 error_json({"zsafe", "zwork"}, "greater:zsafe,zwork", zsafe_low,
+                                            ERR_ZSAFELOWERZWORK)}));
+  BOOST_CHECK_EQUAL(checked.second["warnings"],
+                    json::array({{{"options", {"zwork"}},
+                                  {"message",
+                                   "Warning: Engraving depth (--zwork) is greater than zero!"}}}));
+  // A run stops with the same errors.
+  const auto run = get_check_error(args);
+  BOOST_CHECK_EQUAL(run.first, ERR_NOMILLFEED);
+  BOOST_CHECK_EQUAL(run.second, "Error: " + missing_feed + "\nError: " + zsafe_low);
+}
+
+// The errors that stop a run before it reads any files, which --check-options
+// lists too.
+BOOST_AUTO_TEST_CASE(check_options_matches_a_run) {
+  for (const string args : {
+           "pcb2gcode --noconfigfile --back=board.gbr --drill=board.drl --mill-feed=100 "
+           "--mill-speed=15000 --drill-feed=50 --drill-speed=10000",
+           "pcb2gcode --noconfigfile --back=board.gbr --outline=outline.gbr --drill=board.drl "
+           "--al-back",
+           "pcb2gcode --noconfigfile --drill=board.drl --zsafe=5mm --zchange=-3mm --zdrill=-2.5mm "
+           "--drill-feed=500mm/min --drill-speed=10000rpm",
+           "pcb2gcode --noconfigfile --zsafe=5mm --zchange=10mm --tile-x=0 "
+           "--mill-feed-direction=climb",
+           "pcb2gcode --noconfigfile --zsafe=5mm --zchange=10mm --drill=board.drl --zdrill=-2mm "
+           "--drill-feed=100mm/min --drill-speed=10000rpm --min-milldrill-hole-diameter=0 "
+           "--zcut=-2mm --cutter-diameter=1mm --cut-feed=100mm/min --cut-speed=10000rpm "
+           "--cut-infeed=0.0009in --milldrill-stepover=150% --max-milldrill-entry-diameter=140%",
+           "pcb2gcode --noconfigfile --zsafe=5mm --zchange=10mm --outline=outline.gbr --zcut=1mm "
+           "--cut-front --cut-side=back",
+           "pcb2gcode --noconfigfile --zsafe=5mm --zchange=10mm --tolerance=0"}) {
+    const auto run = get_check_error(args);
+    const auto checked = check_options(args + " --check-options");
+    BOOST_CHECK_EQUAL(checked.first, run.first);
+    string text;
+    for (const auto& error : checked.second["errors"]) {
+      text += "Error: " + error["message"].get<string>() + "\n";
+    }
+    BOOST_CHECK_EQUAL(text, run.second + "\n");
+  }
+}
+
+BOOST_AUTO_TEST_CASE(check_options_reports_unreadable_options) {
+  const auto checked = check_options(
+      "pcb2gcode --check-options --noconfigfile --zsafe=abc --zchange=10mm --tile-x=1.5 --foo=1 "
+      "stray --zchange=2mm --back=board.gbr --zwork=-1mm --mill-feed=1 --mill-speed=-1");
+  BOOST_CHECK_EQUAL(checked.first, ERR_UNKNOWNPARAMETER);
+  const json& errors = checked.second["errors"];
+  BOOST_REQUIRE_EQUAL(errors.size(), 6U);
+  BOOST_CHECK_EQUAL(errors[0], error_json({"foo"}, "unknown_option", "Unknown option --foo=1",
+                                          ERR_UNKNOWNPARAMETER));
+  BOOST_CHECK_EQUAL(errors[1],
+                    error_json({}, "unexpected_argument",
+                               "Unexpected argument stray. Arguments need an option name, like "
+                               "--front=board.gbr", ERR_UNKNOWNPARAMETER));
+  for (size_t i = 2; i < 5; i++) {
+    BOOST_CHECK_EQUAL(errors[i]["rule"], "invalid_value");
+    BOOST_CHECK_EQUAL(errors[i]["code"], ERR_UNKNOWNPARAMETER);
+  }
+  BOOST_CHECK_EQUAL(errors[2]["options"], json::array({"zsafe"}));
+  BOOST_CHECK_NE(errors[2]["message"].get<string>().find("'--zsafe' is invalid"), string::npos);
+  BOOST_CHECK_EQUAL(errors[3]["message"], "the argument ('1.5') for option '--tile-x' is invalid");
+  BOOST_CHECK_EQUAL(errors[4]["message"], "option '--zchange' cannot be specified more than once");
+  // The rules still check the other options, but not the ones that couldn't
+  // be read: no "Missing --zsafe".
+  BOOST_CHECK_EQUAL(errors[5]["rule"], "range:mill-speed");
+  // A run stops at the first problem.
+  BOOST_CHECK_EQUAL(get_error_code("pcb2gcode --noconfigfile --zsafe=abc"), ERR_UNKNOWNPARAMETER);
+}
+
+BOOST_AUTO_TEST_CASE(check_options_with_unparsable_command_line) {
+  // Nothing after a command line that can't be parsed is checked.
+  const auto checked = check_options("pcb2gcode --check-options --noconfigfile --zsafe");
+  BOOST_CHECK_EQUAL(checked.first, ERR_UNKNOWNPARAMETER);
+  BOOST_CHECK_EQUAL(checked.second["errors"],
+                    json::array({error_json({"zsafe"}, "invalid_value",
+                                            "the required argument for option '--zsafe' is missing",
+                                            ERR_UNKNOWNPARAMETER)}));
+  BOOST_CHECK_EQUAL(checked.second["warnings"], json::array());
+}
+
+BOOST_AUTO_TEST_CASE(check_options_reads_config_files) {
+  const string file = "tests/data/broken_examples/check_options/millproject";
+  const string context = "Error parsing configuration file \"" + file + "\": ";
+  auto checked = check_options("pcb2gcode --check-options --config=" + file);
+  BOOST_CHECK_EQUAL(checked.first, ERR_INVALIDPARAMETER);
+  // zchange, after the line that can't be parsed, is read, so it isn't missing.
+  const json& errors = checked.second["errors"];
+  BOOST_REQUIRE_EQUAL(errors.size(), 3U);
+  BOOST_CHECK_EQUAL(errors[0], error_json({"no-such-option"}, "unknown_option",
+                                          context + "unrecognised option 'no-such-option'",
+                                          ERR_INVALIDPARAMETER));
+  BOOST_CHECK_EQUAL(errors[1], error_json({}, "config_file",
+                                          context + "the options configuration file contains an "
+                                          "invalid line 'this line has no equals sign'",
+                                          ERR_INVALIDPARAMETER));
+  BOOST_CHECK_EQUAL(errors[2]["options"], json::array({"zsafe"}));
+  BOOST_CHECK_EQUAL(errors[2]["rule"], "invalid_value");
+  BOOST_CHECK(boost::starts_with(errors[2]["message"].get<string>(), context));
+  // A run stops at the first one.
+  const auto run = get_check_error("pcb2gcode --config=" + file);
+  BOOST_CHECK_EQUAL(run.first, ERR_INVALIDPARAMETER);
+  BOOST_CHECK_EQUAL(errors[0]["message"], run.second);
+
+  // Like in a run, the command line wins over the file.
+  checked = check_options("pcb2gcode --check-options --zsafe=5mm --config=" + file);
+  BOOST_REQUIRE_EQUAL(checked.second["errors"].size(), 2U);
+  BOOST_CHECK_EQUAL(checked.second["errors"][1]["rule"], "config_file");
+
+  checked = check_options("pcb2gcode --check-options --zsafe=5mm --zchange=10mm "
+                          "--config=no_such_file");
+  BOOST_CHECK_EQUAL(checked.second["errors"],
+                    json::array({error_json({"config"}, "config_file",
+                                            "Can't open the configuration file \"no_such_file\" "
+                                            "given with --config.", ERR_INVALIDPARAMETER)}));
+}
+
+BOOST_AUTO_TEST_CASE(check_options_reads_config_syntax) {
+  const string file = "tests/data/broken_examples/check_options/syntax";
+  const string context = "Error parsing configuration file \"" + file + "\": ";
+  const auto checked = check_options("pcb2gcode --check-options --config=" + file);
+  BOOST_CHECK_EQUAL(checked.first, ERR_INVALIDPARAMETER);
+  const string bad_line =
+      po::invalid_config_file_syntax("[unterminated", po::invalid_syntax::unrecognized_line).what();
+  // Options after a [section] start with its name.
+  BOOST_CHECK_EQUAL(
+      checked.second["errors"],
+      json::array({error_json({}, "unknown_option", context + po::unknown_option("").what(),
+                              ERR_INVALIDPARAMETER),
+                   error_json({}, "config_file", context + bad_line, ERR_INVALIDPARAMETER),
+                   error_json({"an-unknown-option-with-a-long-name"}, "unknown_option",
+                              context + "unrecognised option 'an-unknown-option-with-a-long-name'",
+                              ERR_INVALIDPARAMETER),
+                   error_json({"section.zchange"}, "unknown_option",
+                              context + "unrecognised option 'section.zchange'",
+                              ERR_INVALIDPARAMETER),
+                   error_json({"a-section-with-a-long-name.zwork"}, "unknown_option",
+                              context + "unrecognised option 'a-section-with-a-long-name.zwork'",
+                              ERR_INVALIDPARAMETER),
+                   error_json({"zchange"}, "required:zchange",
+                              "Missing --zchange, the tool change height. For example: "
+                              "--zchange=10mm", ERR_NOZCHANGE)}));
+  const auto run = get_check_error("pcb2gcode --config=" + file);
+  BOOST_CHECK_EQUAL(run.first, ERR_INVALIDPARAMETER);
+  BOOST_CHECK_EQUAL(checked.second["errors"][0]["message"], run.second);
+}
+
+BOOST_AUTO_TEST_CASE(check_options_g64_and_tolerance) {
+  const string args = "pcb2gcode --noconfigfile --zsafe=5mm --zchange=10mm --g64=0.001 "
+                      "--tolerance=0.001";
+  const auto checked = check_options(args + " --check-options");
+  BOOST_CHECK_EQUAL(checked.first, ERR_BOTHTOLERANCEG64);
+  BOOST_CHECK_EQUAL(checked.second["errors"],
+                    json::array({error_json({"g64", "tolerance"}, "g64_and_tolerance",
+                                            "--g64 and --tolerance can't both be set. --g64 is "
+                                            "deprecated, so use only --tolerance.",
+                                            ERR_BOTHTOLERANCEG64)}));
+  BOOST_CHECK_EQUAL(checked.second["warnings"],
+                    json::array({{{"options", {"g64"}},
+                                  {"message", "g64 is deprecated, use tolerance."}}}));
+  BOOST_CHECK_EQUAL(get_error_code(args), ERR_BOTHTOLERANCEG64);
+}
+
+BOOST_AUTO_TEST_CASE(check_options_lists_warnings) {
+  auto checked = check_options("pcb2gcode --check-options --noconfigfile --zsafe=5mm "
+                               "--zchange=10mm --tolerance=1 --svg=x --drill=board.drl "
+                               "--drill-front --zdrill=-1mm --drill-feed=1 --drill-speed=1");
+  BOOST_CHECK_EQUAL(checked.first, ERR_OK);
+  BOOST_CHECK_EQUAL(checked.second["errors"], json::array());
+  std::vector<json> warned;
+  for (const auto& warning : checked.second["warnings"]) {
+    warned.push_back(warning["options"]);
+  }
+  BOOST_CHECK(warned == (std::vector<json>{{"tolerance"}, {"svg"},
+                                           {"drill", "front", "back", "outline"},
+                                           {"drill-front"}}));
+  // The outline gives the size of the board.
+  checked = check_options("pcb2gcode --check-options --noconfigfile --zsafe=5mm --zchange=10mm "
+                          "--drill=board.drl --zdrill=-1mm --drill-feed=1 --drill-speed=1 "
+                          "--outline=outline.gbr --zcut=-1mm --cutter-diameter=1mm --cut-feed=1 "
+                          "--cut-speed=1 --cut-infeed=1mm");
+  BOOST_CHECK_EQUAL(checked.first, ERR_OK);
+  BOOST_CHECK_EQUAL(checked.second["warnings"], json::array());
+}
+
+BOOST_AUTO_TEST_CASE(check_options_with_manifest) {
+  const string args = "pcb2gcode --noconfigfile --zsafe=5mm --zchange=10mm --manifest=a.json";
+  auto checked = check_options(args + " --check-options");
+  BOOST_CHECK_EQUAL(checked.first, ERR_OK);
+  BOOST_CHECK_EQUAL(checked.second["errors"], json::array());
+  checked = check_options(args + " --check-options --manifest=b.json");
+  BOOST_CHECK_EQUAL(checked.first, ERR_UNKNOWNPARAMETER);
+  BOOST_CHECK_EQUAL(checked.second["errors"],
+                    json::array({error_json({"manifest"}, "invalid_value",
+                                            "option '--manifest' cannot be specified more than "
+                                            "once", ERR_UNKNOWNPARAMETER)}));
+  BOOST_CHECK_EQUAL(get_error_code(args + " --manifest=b.json"), ERR_UNKNOWNPARAMETER);
+}
+
+// The exit code of a run with the words of args, and what it prints to stderr
+// while it reads and checks the options.
+std::pair<ErrorCodes, string> run_check(const string& args) {
+  std::stringstream printed;
+  struct RestoreCerr {
+    std::streambuf* buffer;
+    ~RestoreCerr() { cerr.rdbuf(buffer); }
+  } restore{cerr.rdbuf(printed.rdbuf())};
+  const ErrorCodes code = get_check_error(args).first;
+  return {code, printed.str()};
+}
+
+// The output of --check-options with args, after checking that a run with args
+// stops at its first error and prints each error that --ignore-warnings lets
+// it go on past.
+json check_like_a_run(const string& args) {
+  const auto run = run_check(args);
+  const auto checked = check_options(args + " --check-options");
+  BOOST_CHECK_EQUAL(checked.first, run.first);
+  const json& errors = checked.second["errors"];
+  if (!errors.empty()) {
+    BOOST_CHECK_NE(run.second.find(errors[0]["message"].get<string>()), string::npos);
+  }
+  for (const auto& warning : checked.second["warnings"]) {
+    if (warning.contains("code")) {
+      BOOST_CHECK_NE(run.second.find("Ignoring error code " +
+                                     std::to_string(warning["code"].get<int>()) + ": "),
+                     string::npos);
+      BOOST_CHECK_NE(run.second.find(warning["message"].get<string>()), string::npos);
+    }
+  }
+  return checked.second;
+}
+
+std::vector<json> rules_and_options(const json& problems) {
+  std::vector<json> found;
+  for (const auto& problem : problems) {
+    found.push_back({problem["rule"], problem["options"]});
+  }
+  return found;
+}
+
+BOOST_AUTO_TEST_CASE(check_options_with_ignore_warnings) {
+  // A run with a file to mill needs these values.
+  json checked = check_like_a_run("pcb2gcode --noconfigfile --ignore-warnings --back=board.gbr");
+  BOOST_CHECK_EQUAL(checked["errors"].size(), 5U);
+  BOOST_CHECK_EQUAL(checked["warnings"], json::array());
+  // Without files, nothing needs them, so a run goes on past them.
+  checked = check_like_a_run("pcb2gcode --noconfigfile --ignore-warnings");
+  BOOST_CHECK_EQUAL(checked["errors"], json::array());
+  BOOST_CHECK(rules_and_options(checked["warnings"]) ==
+              (std::vector<json>{{"required:zsafe", {"zsafe"}},
+                                 {"required:zchange", {"zchange"}}}));
+  const string milling = "pcb2gcode --noconfigfile --ignore-warnings --back=board.gbr "
+                         "--zsafe=-1mm --zchange=10mm --zwork=-0.1mm --mill-feed=100mm/min "
+                         "--mill-speed=10000rpm --tile-x=0";
+  checked = check_like_a_run(milling);
+  BOOST_CHECK_EQUAL(checked["errors"], json::array());
+  BOOST_CHECK(rules_and_options(checked["warnings"]) ==
+              (std::vector<json>{{"range:tile-x", {"tile-x"}},
+                                 {"greater:zsafe,zwork", {"zsafe", "zwork"}}}));
+  // The autoleveller's values are needed only for a layer that it levels.
+  BOOST_CHECK_EQUAL(check_like_a_run(milling + " --al-front")["errors"], json::array());
+  BOOST_CHECK_EQUAL(check_like_a_run(milling + " --al-back")["errors"][0]["rule"],
+                    "required:software");
+  // A run stops at a problem on the command line anyway.
+  checked = check_options("pcb2gcode --check-options --noconfigfile --ignore-warnings --zsafe=x")
+                .second;
+  BOOST_CHECK_EQUAL(checked["errors"][0]["rule"], "invalid_value");
+  BOOST_CHECK_EQUAL(get_error_code("pcb2gcode --noconfigfile --ignore-warnings --zsafe=x"),
+                    ERR_UNKNOWNPARAMETER);
+}
+
+BOOST_AUTO_TEST_CASE(check_options_with_unreadable_config_values) {
+  const string config = " --config=tests/data/broken_examples/unreadable_value/millproject";
+  const std::vector<json> unreadable{{"invalid_value", {"mill-feed-direction"}},
+                                     {"invalid_value", {"mill-feed"}},
+                                     {"invalid_value", {"mill-speed"}}};
+  // A run stops at the first value that it can't read.
+  json checked = check_like_a_run("pcb2gcode" + config);
+  BOOST_CHECK(rules_and_options(checked["errors"]) == unreadable);
+  // With --ignore-warnings, it goes on without them: the options keep their
+  // defaults, a repeated option keeps its first value, and the run stops at
+  // --mill-feed, which the milling needs.
+  checked = check_like_a_run("pcb2gcode --ignore-warnings" + config);
+  BOOST_CHECK_EQUAL(checked["errors"],
+                    json::array({error_json({"mill-feed"}, "required:mill-feed",
+                                            "Missing --mill-feed, the milling feed rate. For "
+                                            "example: --mill-feed=600mm/min", ERR_NOMILLFEED)}));
+  BOOST_CHECK(rules_and_options(checked["warnings"]) == unreadable);
+  BOOST_CHECK_EQUAL(options::get_vm()["mill-speed"].as<Rpm>().asRpm(1), 10000);
+  BOOST_CHECK_EQUAL(check_like_a_run("pcb2gcode --ignore-warnings --mill-feed=100mm/min" +
+                                     config)["errors"], json::array());
+  // A file that Boost can't parse is left out, after its first problem.
+  checked = check_like_a_run("pcb2gcode --ignore-warnings "
+                             "--config=tests/data/broken_examples/check_options/syntax");
+  BOOST_CHECK_EQUAL(checked["errors"], json::array());
+  BOOST_CHECK(rules_and_options(checked["warnings"]) ==
+              (std::vector<json>{{"unknown_option", json::array()},
+                                 {"required:zsafe", {"zsafe"}},
+                                 {"required:zchange", {"zchange"}}}));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -442,6 +442,9 @@ void do_pcb2gcode(int argc, const char* argv[]) {
 
 int main(int argc, const char* argv[]) {
   try {
+    if (options::check_requested(argc, argv)) {
+      return options::check_options(argc, argv, cout);
+    }
     do_pcb2gcode(argc, argv);
   } catch (const pcb2gcode_parse_exception& e) {
     cerr << e.what() << endl;

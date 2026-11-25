@@ -106,7 +106,7 @@ Copy the contents of the generated `mcp-config.json` file into your MCP client c
   "conditions": {"milling": {"description": "A front or back gerber file is given.", "expression": {"any": [{"set": "front"}, {"set": "back"}]}}, ...},
   "groups": [{"id": "cli", "title": "command line only options"}, ...],
   "options": [{"name": "zwork", "group": "milling", "description": "...", "type": "length", "default": null, "example": "-0.05mm", "required_when": "milling", "used_when": "milling"}, ...],
-  "rules": [{"kind": "greater", "options": ["zsafe", "zwork"], "when": "milling", "code": 15, "message": "--zsafe must be higher than --zwork."}, ...],
+  "rules": [{"id": "greater:zsafe,zwork", "kind": "greater", "options": ["zsafe", "zwork"], "when": "milling", "code": 15, "message": "--zsafe must be higher than --zwork."}, ...],
   "exit_codes": [{"code": 0, "name": "ERR_OK"}, ...]
 }
 ```
@@ -123,8 +123,38 @@ Copy the contents of the generated `mcp-config.json` file into your MCP client c
   * `cli_only` (not allowed in configuration files), `deprecated`, `replaced_by`, `value_map` (how old values map to the replacement; without it the value carries over). A deprecated option has `replaced_by` only when its values convert like that. `extra-passes` has none: it still works, and pcb2gcode mills whichever needs more passes, it or `--isolation-width`. With a tool of diameter d and an overlap of o, n extra passes cover an isolation width of d + n × (d − o).
   * `path` (`input_file`, `output_file` or `directory`), `file_format` (`gerber`, `excellon`, `gcode`, `text`, `millproject`, or `json` for `--manifest`), and `relative_to` for output files, which are inside `--output-dir`.
 * `conditions` are the named conditions that `used_when`, `required_when` and the rules refer to. An expression is `true`, `{"set": option}` (it has a value, maybe its default), `{"given": option}` (given on the command line or in a configuration file), `{"equal": [option, value]}`, `{"finite": option}` (set and not `inf`), `{"not": expression}`, `{"any": [expressions]}` or `{"all": [expressions]}`.
-* `rules` are the checks that pcb2gcode runs on the options before it does any work, in order, with the exact error message and exit code. pcb2gcode reports every rule that fails and exits with the code of the first. A rule applies only while its `when` condition holds. Kinds: `required` (the option must have a value), `range` (the value must be within `min` and `max`), `greater` and `greater_or_equal` (between two options, both set, unless the `unless` expression holds), and `forbidden` (the `if` expression must not hold).
+* `rules` are the checks that pcb2gcode runs on the options before it does any work, in order, with the exact error message and exit code. pcb2gcode reports every rule that fails and exits with the code of the first. A rule applies only while its `when` condition holds. Kinds: `required` (the option must have a value), `range` (the value must be within `min` and `max`), `greater` and `greater_or_equal` (between two options, both set, unless the `unless` expression holds), and `forbidden` (the `if` expression must not hold). `id` is the kind and the options, which `--check-options` uses to name the rule.
 * `exit_codes` lists the exit codes. 1 is also the exit code of unexpected errors, like an `--output-dir` that doesn't exist.
+
+## Checking options (`--check-options`)
+
+`pcb2gcode --check-options <options>` reads the options from the command line and the configuration files like a run does, checks them, and prints every problem as JSON. A run stops at the first problem; this lists all of them, so that a GUI can mark every field that needs fixing. It doesn't read the input files or write any files, not even the `--manifest`. With `--check-options`, pcb2gcode does nothing else, even when `--help`, `--version`, `--dump-options` or `--mcp` is given too. A pcb2gcode without the flag exits with code 101 (unknown option) and prints nothing on stdout.
+
+```json
+{
+  "format_version": 1,
+  "errors": [
+    {"options": ["mill-feed"], "rule": "required:mill-feed", "message": "Missing --mill-feed, the milling feed rate. For example: --mill-feed=600mm/min", "code": 13},
+    {"options": ["zsafe", "zwork"], "rule": "greater:zsafe,zwork", "message": "--zsafe must be higher than --zwork.", "code": 15}
+  ],
+  "warnings": [
+    {"options": ["zwork"], "message": "Warning: Engraving depth (--zwork) is greater than zero!"}
+  ]
+}
+```
+
+* `format_version` changes only when the format changes incompatibly. Ignore keys and rules that you don't know.
+* `errors` are the problems that stop a run, in the order that a run finds them: on the command line, in the configuration files, then the rules. Each one has:
+  * `options`: the options that the problem is about, without `--`. It's empty when there's no option name, like for an argument without one or a configuration line that isn't `option=value`.
+  * `rule`: the check that failed. Either the `id` of a rule in `--dump-options`, like `greater:zsafe,zwork`, or a check made while reading the options: `unknown_option`, `unexpected_argument`, `invalid_value` (a value that pcb2gcode can't read, a missing value, or an option given twice), `config_file` (a configuration file that can't be opened, or a line in one that isn't `option=value`) or `g64_and_tolerance`.
+  * `message`: what a run prints for the problem, without `Error: `.
+  * `code`: the exit code of a run that stops at it.
+* `warnings` are the problems that a run prints without stopping, with `options` and `message`: its warnings and, with `--ignore-warnings`, the errors that it goes on past, which also have `rule` and `code`.
+* The exit code is the `code` of the first error, the one that a run with the same options stops at, or 0 when there are no errors.
+* With `--ignore-warnings`, a run goes on past the problems in configuration files, without a value that it can't read or a whole file that it can't parse, and past the rules, except for the values that it needs, like `--zsafe` when there is a file to mill. `--check-options` then checks the options the same way and lists those errors as warnings. A problem on the command line still stops a run.
+* Problems don't hide each other. An option whose value can't be read is left out, and unless a run goes on without it, the rules about it are skipped, so its problem isn't repeated as "Missing --zsafe". Like a run, an option given twice keeps its first value. A configuration file with a bad line still provides its other lines, unless `--ignore-warnings` leaves the whole file out like a run does. Only a command line that can't be parsed at all, like `--zsafe` without a value, stops the checks.
+* Like a run, it reads `millproject` from the working directory unless `--noconfigfile` is given. A GUI passes `--noconfigfile` and the options that it would run with.
+* It doesn't open input files or `--output-dir`, so a run can still fail because one of them is missing or broken.
 
 pcb2gcodeGUI, the official GUI for pcb2gcode, is available [here](https://github.com/pcb2gcode/pcb2gcodeGUI).
 

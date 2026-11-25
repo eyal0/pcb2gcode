@@ -25,8 +25,12 @@
 #include "pcb2gcode_version.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
+#include <functional>
+#include <initializer_list>
 #include <list>
+#include <map>
 #include <sstream>
 #include <boost/exception/all.hpp>
 #include <boost/algorithm/string.hpp>
@@ -280,6 +284,87 @@ std::vector<string> option_names(const po::options_description& description) {
   return names;
 }
 
+// The errors as pcb2gcode prints them, one per line.
+string error_lines(const std::vector<OptionError>& errors) {
+  string lines;
+  for (const auto& error : errors) {
+    lines += "Error: ";
+    lines += error.what;
+    lines += "\n";
+  }
+  return lines;
+}
+
+// The option that an error of Boost's command line parser is about.  Boost
+// names it like --zsafe: a mistake with a short option is an unknown option.
+std::vector<string> error_options(const std::logic_error& error) {
+  const auto* named = dynamic_cast<const po::error_with_option_name*>(&error);
+  return named == nullptr ? std::vector<string>()
+                          : std::vector<string>(1, boost::trim_left_copy_if(
+                                                       named->get_option_name(),
+                                                       boost::is_any_of("-")));
+}
+
+/* Adds a problem about option, or about none if it's empty.  The message is
+ * context and message, then quoted in quotes unless it's empty, the way Boost
+ * quotes names in its messages and leaves out an empty one.
+ */
+void add_problem(std::vector<OptionError>& problems, ErrorCodes code, const char* rule,
+                 const char* option, const string& context, const char* message,
+                 const char* quoted = "") {
+  problems.push_back({context + message, code, {}, rule});
+  OptionError& problem = problems.back();
+  if (*quoted != '\0') {
+    problem.what += " '";
+    problem.what += quoted;
+    problem.what += "'";
+  }
+  if (*option != '\0') {
+    problem.options.push_back(option);
+  }
+}
+
+/* Boost's parser stops at the first unknown option and at the first line that
+ * isn't a comment, a [section] or option=value.  While checking, those
+ * problems are reported in the order of the lines, with the messages of
+ * Boost's unknown_option and invalid_config_file_syntax, and the lines that
+ * Boost can't parse are left out of the text returned, so that the others can
+ * still be read.
+ */
+string check_config_lines(std::istream& stream, const po::options_description& description,
+                          const string& context, std::vector<OptionError>& problems) {
+  const auto blank = boost::is_any_of(" \t\r\n");
+  string text;
+  string prefix;
+  string line;
+  while (std::getline(stream, line)) {
+    string content = line.substr(0, line.find('#'));
+    boost::trim_if(content, blank);
+    const auto equals = content.find('=');
+    if (!content.empty() && content.front() == '[' && content.back() == ']') {
+      prefix = content.substr(1, content.size() - 2);
+      if (!boost::ends_with(prefix, ".")) {
+        prefix += ".";
+      }
+    } else if (equals != string::npos) {
+      string name = content.substr(0, equals);
+      boost::trim_if(name, blank);
+      name.insert(0, prefix);
+      if (name.empty() || description.find_nothrow(name, false) == nullptr) {
+        add_problem(problems, ERR_INVALIDPARAMETER, "unknown_option", name.c_str(), context,
+                    "unrecognised option", name.c_str());
+      }
+    } else if (!content.empty()) {
+      add_problem(problems, ERR_INVALIDPARAMETER, "config_file", "", context,
+                  "the options configuration file contains an invalid line", content.c_str());
+      line.clear();
+    }
+    text += line;
+    text += "\n";
+  }
+  return text;
+}
+
 } // namespace
 
 /******************************************************************************/
@@ -297,6 +382,88 @@ void options::maybe_throw(const std::string& what, ErrorCodes error_code) {
   } else {
     throw pcb2gcode_parse_exception(what, error_code);
   }
+}
+
+void options::report(const OptionError& error) {
+  options& self = instance();
+  if (!self.checking) {
+    maybe_throw(error.what, error.code);
+    return;
+  }
+  // A run passes it to maybe_throw().
+  std::vector<OptionError>& list =
+      self.vm["ignore-warnings"].as<bool>() ? self.ignored : self.problems;
+  list.push_back(error);
+  // Like the messages of the rules.
+  string& what = list.back().what;
+  if (boost::starts_with(what, "Error: ")) {
+    what.erase(0, std::strlen("Error: "));
+  }
+}
+
+/* While checking: stores the values that can be read, like store_config_file()
+ * does, and reports the others: a second value of an option that takes one
+ * isn't read either, and the option keeps the first.  context starts their
+ * messages and code is their exit code.  With ignorable, a run with
+ * --ignore-warnings goes on without them, like it does in a configuration
+ * file.
+ */
+void options::store_readable(const po::parsed_options& parsed, const string& context,
+                             ErrorCodes code, bool ignorable) {
+  options& self = instance();
+  const bool ignored = ignorable && self.vm["ignore-warnings"].as<bool>();
+  std::map<string, boost::any> values;
+  std::set<string> unread;
+  po::parsed_options readable(parsed.description, parsed.m_options_prefix);
+  for (const po::option& option : parsed.options) {
+    const string& name = option.string_key;
+    if (option.unregistered || name.empty() || self.unreadable.count(name) > 0) {
+      continue;
+    }
+    const po::value_semantic& semantic = *parsed.description->find(name, false).semantic();
+    // po::store keeps the values from earlier sources, like the command line.
+    if (self.vm.count(name) > 0 && !self.vm[name].defaulted() && !semantic.is_composing()) {
+      continue;
+    }
+    try {
+      semantic.parse(values[name], option.value, false);
+      readable.options.push_back(option);
+    } catch (po::error_with_option_name& e) {
+      // The message names the option the way po::store's does.
+      e.add_context(name, option.original_tokens.empty() ? name : option.original_tokens[0],
+                    parsed.m_options_prefix);
+      add_problem(ignored ? self.ignored : self.problems, code, "invalid_value", name.c_str(),
+                  context, e.what());
+      unread.insert(name);
+    }
+  }
+  po::store(readable, self.vm);
+  // A run that stops at a value that it can't read doesn't get to the rules
+  // about the option.  With --ignore-warnings, it checks them without the value.
+  for (const auto& name : unread) {
+    if (!ignored && values[name].empty()) {
+      self.unreadable.insert(name);
+    }
+  }
+}
+
+/* While checking: reads a configuration file like parse_files() does, but
+ * reports every problem.  Although a run stops at the first problem, the lines
+ * that can be read are stored too, unless --ignore-warnings leaves out the
+ * whole file like a run does.
+ */
+void options::check_config_file(std::istream& stream, const string& context) {
+  options& self = instance();
+  std::vector<OptionError> unparsed;
+  std::istringstream readable(check_config_lines(stream, self.cfg_options, context, unparsed));
+  if (!unparsed.empty() && self.vm["ignore-warnings"].as<bool>()) {
+    // A run reports only the problem that its parser stops at.
+    self.ignored.push_back(unparsed.front());
+    return;
+  }
+  self.problems.insert(self.problems.end(), unparsed.cbegin(), unparsed.cend());
+  store_readable(po::parse_config_file(readable, self.cfg_options, true), context,
+                 ERR_INVALIDPARAMETER, true);
 }
 
 /* Adjusts the processed varibles map in place to fix for deprecated variables,
@@ -334,22 +501,38 @@ void options::parse(int argc, const char** argv) {
     try {
       po::parsed_options parsed = po::command_line_parser(argc, argv)
           .options(generic).style(style).allow_unregistered().run();
-      string unrecognized;
+      std::vector<OptionError> unrecognized;
       for (const po::option& option : parsed.options) {
         const string token = boost::algorithm::join(option.original_tokens, " ");
         if (option.position_key != -1) {
-          unrecognized += "Error: Unexpected argument " + token +
-                          ". Arguments need an option name, like --front=board.gbr\n";
+          unrecognized.push_back({"Unexpected argument " + token +
+                                  ". Arguments need an option name, like --front=board.gbr",
+                                  ERR_UNKNOWNPARAMETER, {}, "unexpected_argument"});
         } else if (option.unregistered) {
-          unrecognized += "Error: Unknown option " + token + "\n";
+          const string name = boost::trim_left_copy_if(option.string_key, boost::is_any_of("-"));
+          unrecognized.push_back(
+              {"Unknown option " + token, ERR_UNKNOWNPARAMETER, {name}, "unknown_option"});
         }
       }
-      if (!unrecognized.empty()) {
-        throw pcb2gcode_parse_exception(unrecognized + "Run pcb2gcode --help to see all the options.",
-                                        ERR_UNKNOWNPARAMETER);
+      if (instance().checking) {
+        instance().problems.insert(instance().problems.end(), unrecognized.cbegin(),
+                                   unrecognized.cend());
+        store_readable(parsed, "", ERR_UNKNOWNPARAMETER, false);
+      } else {
+        if (!unrecognized.empty()) {
+          throw pcb2gcode_parse_exception(
+              error_lines(unrecognized) + "Run pcb2gcode --help to see all the options.",
+              ERR_UNKNOWNPARAMETER);
+        }
+        po::store(parsed, instance().vm);
       }
-      po::store(parsed, instance().vm);
     } catch (std::logic_error& e) {
+      if (instance().checking) {
+        // The rest of the command line can't be read.
+        instance().problems.push_back(
+            {e.what(), ERR_UNKNOWNPARAMETER, error_options(e), "invalid_value"});
+        return;
+      }
       throw pcb2gcode_parse_exception(std::string("Error: ") + e.what() +
                                       "\nRun pcb2gcode --help to see all the options.",
                                       ERR_UNKNOWNPARAMETER);
@@ -380,8 +563,9 @@ void options::parse(int argc, const char** argv) {
 
     if (instance().vm.count("tolerance")) {
       if (instance().vm.count("g64")) {
-        maybe_throw("Error: --g64 and --tolerance can't both be set. --g64 is deprecated, so use "
-                    "only --tolerance.", ERR_BOTHTOLERANCEG64);
+        report({"Error: --g64 and --tolerance can't both be set. --g64 is deprecated, so use "
+                "only --tolerance.", ERR_BOTHTOLERANCEG64, {"g64", "tolerance"},
+                "g64_and_tolerance"});
       }
     } else if (instance().vm.count("g64")) {
       instance().vm.insert({"tolerance", po::variable_value(instance().vm["g64"].value(), false)});
@@ -443,10 +627,14 @@ void options::parse_files(const std::vector<std::string>& config_files,
       // If the user explicitly specified the config files to use
       // then we will throw an error if any of those files are not
       // found.
-      maybe_throw("Error: Can't open the configuration file \"" + file + "\" given with --config.",
-                  ERR_INVALIDPARAMETER);
+      report({"Error: Can't open the configuration file \"" + file + "\" given with --config.",
+              ERR_INVALIDPARAMETER, {"config"}, "config_file"});
     }
     const string error = "Error parsing configuration file \"" + file + "\": ";
+    if (instance().checking) {
+      check_config_file(stream, error);
+      continue;
+    }
     po::parsed_options parsed(&instance().cfg_options);
     try {
       parsed = po::parse_config_file(stream, instance().cfg_options);
@@ -475,7 +663,9 @@ options::options()
        ("help,?", "produce help message")
        ("version,V", "show the current software version")
        ("mcp", "run as a Model Context Protocol (MCP) server over stdio")
-       ("dump-options", "print every option with its type, default, limits and description as JSON");
+       ("dump-options", "print every option with its type, default, limits and description as JSON")
+       ("check-options", "check the options and print every problem as JSON, without reading input "
+        "files or writing output");
 
    po::options_description drilling_options("Drilling options, for making holes in the PCB");
    drilling_options.add_options()
@@ -663,12 +853,14 @@ void options::add_group(const string& id, const string& used_when,
 /*
  */
 /******************************************************************************/
-// The problems that don't stop pcb2gcode.
-static void warn_about_parameters(const OptionCatalog& catalog, po::variables_map const& vm)
+// The problems that don't stop pcb2gcode: the message and the options that it's about.
+static void warn_about_parameters(
+    const OptionCatalog& catalog, po::variables_map const& vm,
+    const std::function<void(const char*, std::initializer_list<const char*>)>& warn)
 {
     if (vm.count("g64"))
     {
-        cerr << "g64 is deprecated, use tolerance.\n";
+        warn("g64 is deprecated, use tolerance.", {"g64"});
     }
 
     if (vm.count("tolerance"))
@@ -677,31 +869,33 @@ static void warn_about_parameters(const OptionCatalog& catalog, po::variables_ma
         // 0.2mm with --metric, or else 0.008in.
         const double high_tolerance = (vm["metric"].as<bool>() ? 0.2 : 0.008) * unit;
         if (vm["tolerance"].as<Length>().asInch(unit) > high_tolerance)
-            cerr << "Warning: high tolerance value (allowed deviation from toolpath) given.\n"
-                 << endl;
+            warn("Warning: high tolerance value (allowed deviation from toolpath) given.",
+                 {"tolerance"});
     }
 
     if (vm.count("svg")) {
-      cerr << "--svg is deprecated and has no effect anymore, use --vectorial to generate SVGs.\n";
+      warn("--svg is deprecated and has no effect anymore, use --vectorial to generate SVGs.",
+           {"svg"});
     }
 
     if (vm.count("drill")
             && !(vm.count("front") || vm.count("back") || vm.count("outline")))
     {
-        cerr << "Warning: Board dimensions unknown. Gcode for drilling will be probably misaligned.\n";
+        warn("Warning: Board dimensions unknown. Gcode for drilling will be probably "
+             "misaligned.", {"drill", "front", "back", "outline"});
     }
 
     if (catalog.condition("milling").holds(vm) && vm.count("zwork") &&
         vm["zwork"].as<Length>().asDouble() > 0) {
-      cerr << "Warning: Engraving depth (--zwork) is greater than zero!\n";
+      warn("Warning: Engraving depth (--zwork) is greater than zero!", {"zwork"});
     }
 
     if (catalog.condition("cutting").holds(vm) && vm.count("cut-front")) {
-      cerr << "cut-front is deprecated, use cut-side.\n";
+      warn("cut-front is deprecated, use cut-side.", {"cut-front"});
     }
 
     if (catalog.condition("drilling").holds(vm) && vm.count("drill-front")) {
-      cerr << "drill-front is deprecated, use drill-side.\n";
+      warn("drill-front is deprecated, use drill-side.", {"drill-front"});
     }
 }
 
@@ -715,7 +909,9 @@ void options::check_parameters()
   std::vector<OptionError> errors;
 
   try {
-    warn_about_parameters(catalog(), vm);
+    warn_about_parameters(catalog(), vm, [](const char* what, std::initializer_list<const char*>) {
+      cerr << what << "\n";
+    });
     check_rules(catalog(), vm, errors);
   } catch (std::runtime_error& re) {
     errors.push_back({string("Invalid parameter: ") + re.what(), ERR_INVALIDPARAMETER});
@@ -735,14 +931,59 @@ void options::check_parameters()
   if (errors.empty()) {
     return;
   }
-  string what;
-  for (const auto& error : errors) {
-    what += "Error: " + error.what + "\n";
-  }
+  string what = error_lines(errors);
   what.pop_back();
   // Scripts and tests rely on the exit code, which is the code of the first
   // problem found.
   throw pcb2gcode_parse_exception(what, errors.front().code);
+}
+
+bool options::check_requested(int argc, const char** argv)
+{
+  // Looked for before parsing, so that a command line that can't be parsed is
+  // reported as JSON too.
+  for (int i = 1; i < argc; i++) {
+    if (std::strcmp(argv[i], "--check-options") == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+int options::check_options(int argc, const char** argv, std::ostream& out)
+{
+  options& self = instance();
+  self.vm.clear();
+  self.problems.clear();
+  self.ignored.clear();
+  self.unreadable.clear();
+  self.checking = true;
+  parse(argc, argv);
+  // What a run prints without stopping, in its order.
+  std::vector<OptionError> warnings = self.ignored;
+  // Nothing is stored when the command line can't be parsed, and then there
+  // is nothing more to check.
+  if (!self.vm.empty()) {
+    std::vector<OptionError> errors;
+    warn_about_parameters(catalog(), self.vm,
+                          [&](const char* what, std::initializer_list<const char*> names) {
+                            warnings.push_back({what, ERR_OK, {names.begin(), names.end()}});
+                          });
+    check_rules(catalog(), self.vm, errors);
+    // Like check_parameters().
+    const bool ignoring = self.vm["ignore-warnings"].as<bool>();
+    for (const auto& error : errors) {
+      // An option whose value can't be read has no value, so its rules would
+      // only repeat that problem.
+      if (std::none_of(error.options.cbegin(), error.options.cend(),
+                       [&](const string& option) { return self.unreadable.count(option) > 0; })) {
+        (ignoring && !error.needed ? warnings : self.problems).push_back(error);
+      }
+    }
+  }
+  self.checking = false;
+  out << check_report(self.problems, warnings) << endl;
+  return self.problems.empty() ? ERR_OK : self.problems.front().code;
 }
 
 OptionCatalog options::catalog()

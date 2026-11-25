@@ -93,15 +93,6 @@ struct OptionDetails {
   std::map<std::string, std::string> value_map;
 };
 
-struct OptionError {
-  std::string what;
-  ErrorCodes code;
-  // The options that the failed rule involves.
-  std::vector<std::string> options;
-  // The run needs the missing value, so --ignore-warnings can't skip this.
-  bool needed = false;
-};
-
 struct OptionCatalog;
 
 // A check that pcb2gcode runs on the option values before doing any work.
@@ -141,6 +132,8 @@ class OptionRule {
   // 1/25.4 for --metric.
   boost::optional<OptionError> check(const po::variables_map& vm, const OptionCatalog& catalog,
                                      double unit) const;
+  // The kind and the options, like "greater:zsafe,zwork".
+  std::string id() const;
   nlohmann::ordered_json to_json() const;
 
  private:
@@ -150,6 +143,8 @@ class OptionRule {
     bool exclusive;
   };
   OptionRule(Kind kind, const std::vector<std::string>& options);
+  OptionError failure(bool needed = false) const;
+  std::string kind_name() const;
   double limit_value(const Limit& limit, const OptionCatalog& catalog, double unit) const;
   Kind kind;
   std::vector<std::string> options_;
@@ -185,6 +180,10 @@ void check_rules(const OptionCatalog& catalog, const po::variables_map& vm,
 
 // The catalog as JSON, for --dump-options.
 std::string dump_catalog(const OptionCatalog& catalog);
+
+// The problems as JSON, for --check-options.
+std::string check_report(const std::vector<OptionError>& errors,
+                         const std::vector<OptionError>& warnings);
 
 // The value as pcb2gcode reads it, one string per occurrence, or none if the
 // type is unknown.

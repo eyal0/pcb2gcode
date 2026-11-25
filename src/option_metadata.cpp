@@ -41,6 +41,8 @@ namespace {
 
 // Bump only for changes that break readers.  Adding keys doesn't.
 constexpr int FORMAT_VERSION = 1;
+// The same, for the output of --check-options.
+constexpr int CHECK_FORMAT_VERSION = 1;
 
 // What bare numbers mean for lengths and velocities: these units, or the
 // metric ones with --metric.
@@ -627,12 +629,10 @@ boost::optional<OptionError> OptionRule::check(const po::variables_map& vm,
   if (!catalog.condition(when_).holds(vm)) {
     return boost::none;
   }
-  OptionError error{message_, code_, options_};
   switch (kind) {
     case Kind::REQUIRED:
       if (vm.count(options_[0]) == 0) {
-        error.needed = !needed_ || needed_->holds(vm);
-        return error;
+        return failure(!needed_ || needed_->holds(vm));
       }
       break;
     case Kind::RANGE: {
@@ -643,13 +643,13 @@ boost::optional<OptionError> OptionRule::check(const po::variables_map& vm,
       if (min_) {
         const double limit = limit_value(*min_, catalog, unit);
         if (min_->exclusive ? !(value > limit) : !(value >= limit)) {
-          return error;
+          return failure();
         }
       }
       if (max_) {
         const double limit = limit_value(*max_, catalog, unit);
         if (max_->exclusive ? !(value < limit) : !(value <= limit)) {
-          return error;
+          return failure();
         }
       }
       break;
@@ -663,38 +663,47 @@ boost::optional<OptionError> OptionRule::check(const po::variables_map& vm,
       const double a = number_of(vm[options_[0]].value(), unit);
       const double b = number_of(vm[options_[1]].value(), unit);
       if (kind == Kind::GREATER ? !(a > b) : !(a >= b)) {
-        return error;
+        return failure();
       }
       break;
     }
     case Kind::FORBIDDEN:
       if (if_.holds(vm)) {
-        return error;
+        return failure();
       }
       break;
   }
   return boost::none;
 }
 
-json OptionRule::to_json() const {
-  json rule;
+OptionError OptionRule::failure(bool needed) const {
+  return {message_, code_, options_, id(), needed};
+}
+
+string OptionRule::kind_name() const {
   switch (kind) {
     case Kind::REQUIRED:
-      rule["kind"] = "required";
-      break;
+      return "required";
     case Kind::RANGE:
-      rule["kind"] = "range";
-      break;
+      return "range";
     case Kind::GREATER:
-      rule["kind"] = "greater";
-      break;
+      return "greater";
     case Kind::GREATER_OR_EQUAL:
-      rule["kind"] = "greater_or_equal";
-      break;
+      return "greater_or_equal";
     case Kind::FORBIDDEN:
-      rule["kind"] = "forbidden";
       break;
   }
+  return "forbidden";
+}
+
+string OptionRule::id() const {
+  return kind_name() + ":" + boost::algorithm::join(options_, ",");
+}
+
+json OptionRule::to_json() const {
+  json rule;
+  rule["id"] = id();
+  rule["kind"] = kind_name();
   rule["options"] = options_;
   rule["when"] = when_;
   if (kind == Kind::REQUIRED) {
@@ -780,6 +789,27 @@ string dump_catalog(const OptionCatalog& catalog) {
   dump["rules"] = rules;
   dump["exit_codes"] = exit_codes_json();
   return dump.dump(2);
+}
+
+// How nlohmann::json writes a problem, for check_report().
+static void to_json(json& j, const OptionError& problem) {
+  j["options"] = problem.options;
+  if (problem.code != ERR_OK) {
+    j["rule"] = problem.rule;
+  }
+  j["message"] = problem.what;
+  if (problem.code != ERR_OK) {
+    j["code"] = problem.code;
+  }
+}
+
+string check_report(const vector<OptionError>& errors, const vector<OptionError>& warnings) {
+  json report;
+  report["format_version"] = CHECK_FORMAT_VERSION;
+  report["errors"] = errors;
+  report["warnings"] = warnings;
+  // The messages quote the command line, which might not be UTF-8.
+  return report.dump(2, ' ', false, json::error_handler_t::replace);
 }
 
 boost::optional<vector<string>> format_option_value(const boost::any& value) {

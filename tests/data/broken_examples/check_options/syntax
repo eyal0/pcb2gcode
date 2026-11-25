@@ -1,0 +1,10 @@
+# Comments and empty lines are skipped.
+
+=5
+[unterminated
+zsafe=5mm # A comment can follow a value.
+an-unknown-option-with-a-long-name=1
+[section.]
+zchange=10mm
+[a-section-with-a-long-name]
+zwork=-1mm

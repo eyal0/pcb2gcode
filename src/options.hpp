@@ -30,6 +30,8 @@ namespace po = boost::program_options;
 #include <boost/noncopyable.hpp>
 
 #include <istream>
+#include <ostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -122,6 +124,20 @@ class pcb2gcode_parse_exception : public std::exception {
   ErrorCodes error_code;
 };
 
+// A problem with the options.  A warning, which doesn't stop pcb2gcode, has
+// the code ERR_OK and no rule.
+struct OptionError {
+  std::string what;
+  ErrorCodes code;
+  // The options that the problem involves.
+  std::vector<std::string> options;
+  // The check that failed: the id of a rule in --dump-options, or a check
+  // that pcb2gcode makes while reading the options, like "unknown_option".
+  std::string rule;
+  // The run needs the missing value, so --ignore-warnings can't skip this.
+  bool needed = false;
+};
+
 
 // A group of options as --help shows them.
 struct OptionGroup {
@@ -155,6 +171,13 @@ public:
     static std::string help();
     // Every option and what pcb2gcode knows about it, as JSON.
     static std::string dump_options();
+    // Whether the command line has --check-options.
+    static bool check_requested(int argc, const char** argv);
+    // For --check-options: reads and checks the options like a run does, but
+    // reports every problem instead of stopping at the first, and reads no
+    // input files.  Prints the problems to out as JSON and returns the exit
+    // code.
+    static int check_options(int argc, const char** argv, std::ostream& out);
     // The options, their groups and the rules that check_parameters() checks.
     static OptionCatalog catalog();
 
@@ -163,11 +186,25 @@ private:
     options();
     void add_group(const std::string& id, const std::string& used_when,
                    const po::options_description& group);
+    // Passes the problem to maybe_throw(), or adds it to problems while
+    // checking.
+    static void report(const OptionError& error);
+    static void store_readable(const po::parsed_options& parsed, const std::string& context,
+                               ErrorCodes code, bool ignorable);
+    static void check_config_file(std::istream& stream, const std::string& context);
     po::variables_map vm;
     po::options_description cli_options;      //CLI options
     po::options_description cfg_options;      // all the non-CLI options
     po::options_description all_options;
     std::vector<OptionGroup> groups;          // in --help order
+    // While check_options() runs, problems don't throw.  They are added to
+    // problems, or to ignored if --ignore-warnings lets a run go on, and the
+    // options whose values can't be read are left out of vm and, if a run
+    // stops at them, added to unreadable.
+    bool checking = false;
+    std::vector<OptionError> problems;
+    std::vector<OptionError> ignored;
+    std::set<std::string> unreadable;
     static options& instance();
 };
 
