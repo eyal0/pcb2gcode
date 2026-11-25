@@ -84,9 +84,6 @@ struct OptionDetails {
   // Without value_map, the value carries over unchanged.
   OptionDetails& replaced(const std::string& option,
                           const std::map<std::string, std::string>& values = {});
-  // A plain number that pcb2gcode reads as a length, in inches or, with
-  // --metric, in millimeters.
-  OptionDetails& length_number();
 
   std::string used_when;
   std::string path;
@@ -94,7 +91,6 @@ struct OptionDetails {
   std::string default_note;
   std::string replaced_by;
   std::map<std::string, std::string> value_map;
-  bool bare_length = false;
 };
 
 struct OptionError {

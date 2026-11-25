@@ -67,9 +67,14 @@ class Lexer {
   }
   double get_double() {
     get_whitespace();
-    std::string text = get_string<bool>([](int c) {
+    const size_t start = pos;
+    get_string<bool>([](int c) {
         return std::isdigit(c) || c == '-' || c == '.' || c == '+';
       });
+    if (pos > start) {
+      skip_exponent();
+    }
+    const std::string text = input.substr(start, pos - start);
     try {
       return boost::lexical_cast<double>(text);
     } catch (const boost::bad_lexical_cast& e) {
@@ -111,6 +116,21 @@ class Lexer {
       pos++;
     }
     return input.substr(start, pos-start);
+  }
+  // Moves past an exponent, like the "e-4" of "4e-4", if there is one.
+  void skip_exponent() {
+    const size_t start = pos;
+    if (pos < input.size() && (input[pos] == 'e' || input[pos] == 'E')) {
+      pos++;
+      if (pos < input.size() && (input[pos] == '+' || input[pos] == '-')) {
+        pos++;
+      }
+      if (pos < input.size() && std::isdigit(static_cast<unsigned char>(input[pos]))) {
+        get_string<int>(std::isdigit);
+        return;
+      }
+    }
+    pos = start;
   }
   // Returns number of characters advanced if string is found at
   // current position.  If not found, returns 0.
@@ -504,9 +524,8 @@ unit_t parse_unit(const std::string& s) {
   return unit_t(value, one);
 }
 
-// The shortest text that reads back as exactly this number.  It has no
-// exponent because parse_unit doesn't accept one.  parse_unit can't read
-// "inf" either.
+// The shortest text without an exponent that reads back as exactly this
+// number.  parse_unit can't read "inf".
 inline std::string format_number(double value) {
   if (std::isinf(value)) {
     return value > 0 ? "inf" : "-inf";

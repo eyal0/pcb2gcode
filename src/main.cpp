@@ -99,7 +99,7 @@ void do_pcb2gcode(int argc, const char* argv[]) {
     //prepare environment:
 
     const bool ymirror = vm["mirror-yaxis"].as<bool>();
-    const double tolerance = vm["tolerance"].as<double>() * unit;
+    const double tolerance = vm["tolerance"].as<Length>().asInch(unit);
     const bool explicit_tolerance = !vm["nog64"].as<bool>();
     const string outputdir = vm["output-dir"].as<string>();
     const double spindown_time = vm.count("spindown-time") ?

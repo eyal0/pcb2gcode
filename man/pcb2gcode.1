@@ -30,7 +30,8 @@ treated as a comment). Options that don't take an argument (like
 
 Unless configured otherwise, numeric values are in units of inch and
 inch/minute. When the \fB\-\-metric\fP option is given, they are in mm and
-mm/minute.
+mm/minute. Lengths and feed rates can also have a unit, like 0.1mm or
+600mm/min, and then \fB\-\-metric\fP doesn't change them.
 .PP
 pcb2gcode 2.5.0
 .SS "command line only options:"
@@ -68,7 +69,8 @@ maximum deviation from toolpath,
 overrides internal calculation
 .TP
 \fB\-\-tolerance\fR arg
-maximum toolpath tolerance
+maximum toolpath tolerance (default is
+0.0004in)
 .TP
 \fB\-\-nog64\fR [=arg(=1)] (=0)
 do not set an explicit g64
