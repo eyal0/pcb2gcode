@@ -628,10 +628,10 @@ boost::optional<OptionError> OptionRule::check(const po::variables_map& vm,
     return boost::none;
   }
   OptionError error{message_, code_, options_};
+  error.needed = needed_ ? needed_->holds(vm) : kind == Kind::REQUIRED;
   switch (kind) {
     case Kind::REQUIRED:
       if (vm.count(options_[0]) == 0) {
-        error.needed = !needed_ || needed_->holds(vm);
         return error;
       }
       break;

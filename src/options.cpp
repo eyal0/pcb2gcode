@@ -129,11 +129,15 @@ const std::vector<OptionRule>& option_rules() {
   const auto equal = &OptionCondition::equal;
   const auto set = &OptionCondition::set;
   const auto given = &OptionCondition::given;
+  const OptionCondition front = set("front");
+  const OptionCondition back = set("back");
+  // Importing a Gerber file crashes with --tolerance=0.
+  const OptionCondition gerbers = front || back || set("outline");
   // Every mill and the driller use zsafe and zchange.
-  const OptionCondition processing = set("front") || set("back") || set("outline") || set("drill");
+  const OptionCondition processing = gerbers || set("drill");
   // The autoleveller reads its values only for a side that has a layer.
-  const OptionCondition autolevelled = (equal("al-front", "true") && set("front")) ||
-                                       (equal("al-back", "true") && set("back"));
+  const OptionCondition autolevelled = (equal("al-front", "true") && front) ||
+                                       (equal("al-back", "true") && back);
   static const std::vector<OptionRule> rules{
     range("spinup-time").at_least("0")
         .fails_with(ERR_NEGATIVESPINUP, "--spinup-time can't be negative."),
@@ -143,7 +147,7 @@ const std::vector<OptionRule>& option_rules() {
         .fails_with(ERR_FALSEMIRRORABSOLUTE,
                     "--mirror-absolute=false isn't supported anymore. Remove it, and use "
                     "--mirror-axis to choose where the back side is mirrored."),
-    range("tolerance").above("0")
+    range("tolerance").above("0").needed_when(gerbers)
         .fails_with(ERR_NEGATIVETOLERANCE,
                     "--tolerance must be greater than 0, because arcs are cut as straight lines "
                     "that stay within the tolerance of the arc. Leave it out to use the default."),

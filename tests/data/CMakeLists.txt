@@ -165,6 +165,19 @@ pcb2gcode_add_integration_script_test(
   EXPECTED_EXIT 50
   PCB2GCODE_ARGS "--tolerance=0")
 
+# --ignore-warnings can't go on past it: the import would crash.
+pcb2gcode_add_integration_script_test(
+  integration_ignore_warnings_zero_tolerance
+  "tests/data/gerbv_example/multivibrator"
+  EXPECTED_EXIT 50
+  PCB2GCODE_ARGS "--tolerance=0" "--ignore-warnings")
+
+pcb2gcode_add_integration_script_test(
+  integration_ignore_warnings_zero_g64
+  "tests/data/gerbv_example/multivibrator"
+  EXPECTED_EXIT 50
+  PCB2GCODE_ARGS "--g64=0" "--ignore-warnings")
+
 pcb2gcode_add_integration_script_test(
   integration_zero_mill_infeed
   "tests/data/gerbv_example/am-test"

@@ -213,6 +213,23 @@ BOOST_AUTO_TEST_CASE(zero_tolerance) {
   BOOST_CHECK_EQUAL(get_check_error(start + " --tolerance=0.0001").first, ERR_OK);
 }
 
+BOOST_AUTO_TEST_CASE(ignore_warnings_with_zero_tolerance) {
+  // Importing a Gerber file crashes with --tolerance=0.
+  const std::string start = "pcb2gcode --noconfigfile --ignore-warnings --zsafe=5mm --zchange=10mm";
+  for (const std::string layer : {"front", "back", "outline"}) {
+    const auto error = get_check_error(start + " --tolerance=0 --" + layer + "=board.gbr");
+    BOOST_CHECK_EQUAL(error.first, ERR_NEGATIVETOLERANCE);
+    BOOST_CHECK_NE(error.second.find("--tolerance must be greater than 0"), std::string::npos);
+  }
+  BOOST_CHECK_EQUAL(get_check_error(start + " --g64=0 --back=board.gbr").first,
+                    ERR_NEGATIVETOLERANCE);
+  // Without a Gerber file, the run goes on.
+  BOOST_CHECK_EQUAL(get_check_error(start + " --tolerance=0").first, ERR_OK);
+  BOOST_CHECK_EQUAL(get_check_error(start + " --tolerance=0 --drill=board.drl --zdrill=-1mm "
+                                    "--drill-feed=100mm/min --drill-speed=10000rpm").first,
+                    ERR_OK);
+}
+
 BOOST_AUTO_TEST_CASE(zchange_below_zdrill) {
   auto error = get_check_error("pcb2gcode --noconfigfile --drill=board.drl --zsafe=5mm "
                                "--zchange=-3mm --zdrill=-2.5mm --drill-feed=500mm/min "

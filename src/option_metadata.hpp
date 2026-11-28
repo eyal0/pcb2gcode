@@ -98,7 +98,8 @@ struct OptionError {
   ErrorCodes code;
   // The options that the failed rule involves.
   std::vector<std::string> options;
-  // The run needs the missing value, so --ignore-warnings can't skip this.
+  // The run can't go on without a good value, so --ignore-warnings can't skip
+  // this.
   bool needed = false;
 };
 
@@ -131,8 +132,9 @@ class OptionRule {
   OptionRule& when(const std::string& condition);
   // The rule doesn't apply while this holds.
   OptionRule& unless(const OptionCondition& condition);
-  // A required value is needed only while this holds, instead of whenever the
-  // rule applies.
+  // With --ignore-warnings, the run still stops at this rule's failure while
+  // this holds.  Without it, a required rule's failure always stops the run
+  // and the others' never do.
   OptionRule& needed_when(const OptionCondition& condition);
   // Required rules make their own message.
   OptionRule& fails_with(ErrorCodes code, const std::string& message = "");
