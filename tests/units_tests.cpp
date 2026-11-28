@@ -30,6 +30,9 @@ BOOST_AUTO_TEST_CASE(parse_length) {
   BOOST_CHECK_EQUAL(parse_unit<Length>("  \t50.8\tmm\t").asInch(2), 2);
   BOOST_CHECK_EQUAL(parse_unit<Length>("10000thou").asInch(0), 10);
   BOOST_CHECK_EQUAL(parse_unit<Length>("0.254 m").asInch(0), 10);
+  BOOST_CHECK_EQUAL(parse_unit<Length>("4e-4").asInch(1), 0.0004);
+  BOOST_CHECK_EQUAL(parse_unit<Length>("2.54E1mm").asInch(200), 1);
+  BOOST_CHECK_EQUAL(parse_unit<Length>("-2.54e+1 mm").asInch(200), -1);
   Length length;
   std::stringstream ss;
   ss << parse_unit<Length>("4");
@@ -38,6 +41,11 @@ BOOST_AUTO_TEST_CASE(parse_length) {
   BOOST_CHECK_THROW(parse_unit<Length>("50.8mm/s"), po::validation_error);
   BOOST_CHECK_THROW(parse_unit<Length>("50.8seconds"), po::validation_error);
   BOOST_CHECK_THROW(parse_unit<Length>("50.8s"), po::validation_error);
+  // An e without digits isn't an exponent.
+  BOOST_CHECK_THROW(parse_unit<Length>("1e"), po::validation_error);
+  BOOST_CHECK_THROW(parse_unit<Length>("1e-"), po::validation_error);
+  BOOST_CHECK_THROW(parse_unit<Length>("1e-mm"), po::validation_error);
+  BOOST_CHECK_THROW(parse_unit<Length>("e5"), po::validation_error);
 }
 
 BOOST_AUTO_TEST_CASE(parse_time) {
@@ -91,6 +99,7 @@ BOOST_AUTO_TEST_CASE(parse_velocity) {
   BOOST_CHECK_EQUAL(parse_unit<Velocity>(" 50.8 mm/min ").asInchPerMinute(2), 2);
   BOOST_CHECK_EQUAL(parse_unit<Velocity>(" 50.8 mm per min ").asInchPerMinute(2), 2);
   BOOST_CHECK_EQUAL(parse_unit<Velocity>("  \t50.8\tmm\t/minutes").asInchPerMinute(2), 2);
+  BOOST_CHECK_EQUAL(parse_unit<Velocity>("2.54e1mm/min").asInchPerMinute(100), 1);
 
   BOOST_CHECK_THROW(parse_unit<Velocity>("50.8mm"), po::validation_error);
   BOOST_CHECK_THROW(parse_unit<Velocity>("50.8 mm "), po::validation_error);
@@ -129,7 +138,7 @@ BOOST_AUTO_TEST_CASE(format_numbers) {
   BOOST_CHECK_EQUAL(format_number(50), "50");
   BOOST_CHECK_EQUAL(format_number(-0.05), "-0.05");
   BOOST_CHECK_EQUAL(format_number(0.0001), "0.0001");
-  // No exponent, which pcb2gcode can't read.
+  // No exponent, which is easier to read.
   BOOST_CHECK_EQUAL(format_number(2.54e-5), "0.0000254");
   BOOST_CHECK_EQUAL(format_number(1e20), "100000000000000000000");
   BOOST_CHECK_EQUAL(format_number(std::numeric_limits<double>::infinity()), "inf");

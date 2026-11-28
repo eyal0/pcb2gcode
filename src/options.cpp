@@ -37,7 +37,6 @@
 
 #include <string>
 using std::string;
-using std::to_string;
 
 #include <iostream>
 using std::cerr;
@@ -70,8 +69,8 @@ const std::map<string, OptionDetails>& option_details() {
   const string auto_side = "auto: the front, unless only --back is given";
   static const std::map<string, OptionDetails> details{
     {"config", OptionDetails().input("millproject")},
-    {"g64", OptionDetails().replaced("tolerance").length_number()},
-    {"tolerance", OptionDetails().length_number().note("0.0004 inches")},
+    {"g64", OptionDetails().replaced("tolerance")},
+    {"tolerance", OptionDetails().note("0.0004in, or --g64 if it's given")},
     {"output-dir", OptionDetails().directory().note("empty: the working directory")},
     {"manifest", OptionDetails().output("json")},
     {"preamble-text", OptionDetails().input("text")},
@@ -384,26 +383,13 @@ void options::parse(int argc, const char** argv) {
         maybe_throw("Error: --g64 and --tolerance can't both be set. --g64 is deprecated, so use "
                     "only --tolerance.", ERR_BOTHTOLERANCEG64);
       }
+    } else if (instance().vm.count("g64")) {
+      instance().vm.insert({"tolerance", po::variable_value(instance().vm["g64"].value(), false)});
     } else {
-        const double cfactor = instance().vm["metric"].as<bool>() ? 25.4 : 1;
-        double tolerance;
-
-        if (instance().vm.count("g64"))
-        {
-            tolerance = instance().vm["g64"].as<double>();
-        }
-        else {
-          tolerance = 0.0004 * cfactor;
-        }
-
-        string tolerance_str = "--tolerance=" + to_string(tolerance);
-
-        const char *fake_tolerance_command_line[] = { "",
-                                            tolerance_str.c_str() };
-
-        po::store(po::parse_command_line(2,
-                        (char**) fake_tolerance_command_line,
-                        generic, style), instance().vm);
+      // 0.0004in, as a number in --metric units: parse_unit<Length>("0.0004in") is a slightly
+      // different number of inches, which would change the G-code.
+      const double cfactor = instance().vm["metric"].as<bool>() ? 25.4 : 1;
+      instance().vm.insert({"tolerance", po::variable_value(Length(0.0004 * cfactor), true)});
     }
     fix_variables_map(instance().vm);
 
@@ -619,7 +605,7 @@ options::options()
        ("mirror-absolute", po::value<bool>()->default_value(true)->implicit_value(true),
         "[DEPRECATED, must always be true] mirror back side along absolute zero instead of board center")
        ("mirror-axis", po::value<Length>()->default_value(Length(0)), "For two-sided boards, the PCB needs to be flipped along the axis x=VALUE")
-       ("mirror-yaxis", po::value<bool>()->default_value(false), "For two-sided boards, the PCB needs to be flipped along the y axis instead");
+       ("mirror-yaxis", po::value<bool>()->default_value(false)->implicit_value(true), "For two-sided boards, the PCB needs to be flipped along the y axis instead");
    add_group("alignment", "always", alignment_options);
 
    po::options_description cnc_options("CNC options, common to all the milling, drilling, and cutting");
@@ -638,8 +624,8 @@ options::options()
        ("svg", po::value<string>(), "[DEPRECATED] use --vectorial, SVGs will be generated automatically; this option has no effect")
        ("metric", po::value<bool>()->default_value(false)->implicit_value(true), "use metric units for parameters. does not affect gcode output")
        ("metricoutput", po::value<bool>()->default_value(false)->implicit_value(true), "use metric units for output")
-       ("g64", po::value<double>(), "[DEPRECATED, use tolerance instead] maximum deviation from toolpath, overrides internal calculation")
-       ("tolerance", po::value<double>(), "maximum toolpath tolerance")
+       ("g64", po::value<Length>(), "[DEPRECATED, use tolerance instead] maximum deviation from toolpath, overrides internal calculation")
+       ("tolerance", po::value<Length>(), "maximum toolpath tolerance (default is 0.0004in)")
        ("nog64", po::value<bool>()->default_value(false)->implicit_value(true), "do not set an explicit g64")
        ("output-dir", po::value<string>()->default_value(""), "output directory")
        ("basename", po::value<string>(), "prefix for default output file names")
@@ -685,12 +671,12 @@ static void warn_about_parameters(const OptionCatalog& catalog, po::variables_ma
         cerr << "g64 is deprecated, use tolerance.\n";
     }
 
-    //Upper threshold value of tolerance parameter for warning
-    double tolerance_th = vm["metric"].as<bool>() ? 0.2 : 0.008;
-
-    if (vm.count("tolerance"))              //tolerance parameter is given
+    if (vm.count("tolerance"))
     {
-        if (vm["tolerance"].as<double>() > tolerance_th)
+        const double unit = vm["metric"].as<bool>() ? 1. / 25.4 : 1;
+        // 0.2mm with --metric, or else 0.008in.
+        const double high_tolerance = (vm["metric"].as<bool>() ? 0.2 : 0.008) * unit;
+        if (vm["tolerance"].as<Length>().asInch(unit) > high_tolerance)
             cerr << "Warning: high tolerance value (allowed deviation from toolpath) given.\n"
                  << endl;
     }

@@ -379,6 +379,68 @@ BOOST_AUTO_TEST_CASE(rule_errors_name_their_options) {
   BOOST_CHECK(errors[0].options == (std::vector<std::string>{"zsafe", "zwork"}));
 }
 
+// The tolerance in inches, as pcb2gcode uses it.
+double tolerance(const string& args) {
+  BOOST_CHECK_EQUAL(get_error_code(boost::trim_copy("pcb2gcode --noconfigfile " + args)), ERR_OK);
+  const po::variables_map& vm = options::get_vm();
+  const double unit = vm["metric"].as<bool>() ? 1. / 25.4 : 1;
+  return vm["tolerance"].as<Length>().asInch(unit);
+}
+
+BOOST_AUTO_TEST_CASE(tolerance_without_unit) {
+  // Exactly the numbers that pcb2gcode used when --tolerance was a plain number.
+  BOOST_CHECK_EQUAL(tolerance(""), 0.0004);
+  BOOST_CHECK_EQUAL(tolerance("--metric"), 0.0004);
+  BOOST_CHECK_EQUAL(tolerance("--tolerance=0.001"), 0.001);
+  BOOST_CHECK_EQUAL(tolerance("--tolerance 0.001"), 0.001);
+  BOOST_CHECK_EQUAL(tolerance("--metric --tolerance=0.006"), 0.006 * (1. / 25.4));
+  BOOST_CHECK_EQUAL(tolerance("--tolerance=4e-4"), 0.0004);
+  BOOST_CHECK_EQUAL(tolerance("--metric --tolerance=1E-2"), 0.01 * (1. / 25.4));
+  BOOST_CHECK_EQUAL(tolerance("--g64=0.001"), 0.001);
+  BOOST_CHECK_EQUAL(tolerance("--metric --g64=0.02"), 0.02 * (1. / 25.4));
+}
+
+BOOST_AUTO_TEST_CASE(tolerance_with_unit) {
+  BOOST_CHECK_CLOSE(tolerance("--tolerance=0.01mm"), 0.01 / 25.4, 1e-9);
+  // The unit wins over --metric.
+  BOOST_CHECK_CLOSE(tolerance("--metric --tolerance=0.001in"), 0.001, 1e-9);
+  BOOST_CHECK_CLOSE(tolerance("--metric --tolerance=2thou"), 0.002, 1e-9);
+  BOOST_CHECK_CLOSE(tolerance("--g64=0.01mm"), 0.01 / 25.4, 1e-9);
+  BOOST_CHECK_EQUAL(get_error_code("pcb2gcode --noconfigfile --tolerance=0.01mm/s"),
+                    ERR_UNKNOWNPARAMETER);
+  BOOST_CHECK_EQUAL(get_error_code("pcb2gcode --noconfigfile --tolerance=0.01mm --g64=0.01mm"),
+                    ERR_BOTHTOLERANCEG64);
+  BOOST_CHECK_EQUAL(get_check_error("pcb2gcode --noconfigfile --zsafe=5mm --zchange=10mm "
+                                    "--tolerance=-0.01mm").first,
+                    ERR_NEGATIVETOLERANCE);
+  BOOST_CHECK_EQUAL(get_check_error("pcb2gcode --noconfigfile --zsafe=5mm --zchange=10mm "
+                                    "--tolerance=0mm").first,
+                    ERR_NEGATIVETOLERANCE);
+  BOOST_CHECK_EQUAL(get_check_error("pcb2gcode --noconfigfile --zsafe=5mm --zchange=10mm "
+                                    "--tolerance=0.001mm").first,
+                    ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(mirror_yaxis_flag) {
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile", "mirror-yaxis"), false);
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile --mirror-yaxis", "mirror-yaxis"),
+                    true);
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --mirror-yaxis --noconfigfile", "mirror-yaxis"),
+                    true);
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile --mirror-yaxis=false",
+                                    "mirror-yaxis"),
+                    false);
+  // The value can also be the next argument.
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile --mirror-yaxis false",
+                                    "mirror-yaxis"),
+                    false);
+  BOOST_CHECK_EQUAL(get_value<bool>("pcb2gcode --noconfigfile --mirror-yaxis true --zsafe=1mm",
+                                    "mirror-yaxis"),
+                    true);
+  BOOST_CHECK_EQUAL(get_error_code("pcb2gcode --noconfigfile --mirror-yaxis board.gbr"),
+                    ERR_UNKNOWNPARAMETER);
+}
+
 json dump() {
   return json::parse(options::dump_options());
 }
@@ -578,11 +640,12 @@ BOOST_AUTO_TEST_CASE(dump_option_details) {
   BOOST_CHECK(!gcode.contains("multitoken"));
 
   const json tolerance = find_option(dumped, "tolerance");
-  BOOST_CHECK_EQUAL(tolerance["type"], "double");
+  BOOST_CHECK_EQUAL(tolerance["type"], "length");
+  // It depends on --g64.
   BOOST_CHECK(tolerance["default"].is_null());
-  BOOST_CHECK_EQUAL(tolerance["bare_unit"], "in");
-  BOOST_CHECK_EQUAL(tolerance["metric_bare_unit"], "mm");
+  BOOST_CHECK_EQUAL(tolerance["default_note"], "0.0004in, or --g64 if it's given");
   BOOST_CHECK_EQUAL(tolerance["range"], (json{{"min", "0"}, {"min_exclusive", true}}));
+  BOOST_CHECK_EQUAL(find_option(dumped, "g64")["type"], "length");
 
   const json help = find_option(dumped, "help");
   BOOST_CHECK_EQUAL(help["type"], "none");
@@ -603,7 +666,7 @@ BOOST_AUTO_TEST_CASE(dump_option_details) {
   BOOST_CHECK_EQUAL(find_option(dumped, "extra-passes")["deprecated"], true);
   BOOST_CHECK(!find_option(dumped, "extra-passes").contains("replaced_by"));
   BOOST_CHECK_EQUAL(find_option(dumped, "vectorial")["deprecated"], true);
-  BOOST_CHECK(!find_option(dumped, "mirror-yaxis").contains("implicit"));
+  BOOST_CHECK_EQUAL(find_option(dumped, "mirror-yaxis")["implicit"], "true");
 
   const json front = find_option(dumped, "front");
   BOOST_CHECK_EQUAL(front["path"], "input_file");
@@ -649,6 +712,9 @@ BOOST_AUTO_TEST_CASE(format_values) {
               (std::vector<string>{"M3", "G4 P1"}));
   BOOST_CHECK(reformat("drills-available", {"1mm:-0.1mm:+0.2mm,2mm", "3mm"}) ==
               (std::vector<string>{"1mm:-0.1mm:+0.2mm,2mm", "3mm"}));
+  // No option is a double anymore, but a double is still written without an exponent.
+  BOOST_CHECK(format_option_value(boost::any(2.5e-5)) ==
+              boost::make_optional(std::vector<string>{"0.000025"}));
   // pcb2gcode has no options of this type.
   BOOST_CHECK(!format_option_value(boost::any(1.5f)));
 }

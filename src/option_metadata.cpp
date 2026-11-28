@@ -354,10 +354,6 @@ json option_json(const OptionCatalog& catalog, const OptionGroup& group, const s
   if (type != nullptr && !type->choices.is_null()) {
     result["choices"] = type->choices;
   }
-  if (details.bare_length) {
-    result["bare_unit"] = BARE_LENGTH;
-    result["metric_bare_unit"] = METRIC_BARE_LENGTH;
-  }
   for (const auto& rule : rules) {
     if (rule["options"] != json::array({name})) {
       continue;
@@ -536,11 +532,6 @@ OptionDetails& OptionDetails::replaced(const string& option,
                                        const std::map<string, string>& values) {
   replaced_by = option;
   value_map = values;
-  return *this;
-}
-
-OptionDetails& OptionDetails::length_number() {
-  bare_length = true;
   return *this;
 }
 

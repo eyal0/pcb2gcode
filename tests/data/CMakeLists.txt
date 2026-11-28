@@ -139,6 +139,20 @@ pcb2gcode_add_integration_script_test(
   EXPECTED_EXIT 49
   PCB2GCODE_ARGS "--g64=5" "--tolerance=123")
 
+# 0.05mm is exactly as many inches as the millproject's tolerance=0.05 with
+# metric=true, so the output matches expected/.
+pcb2gcode_add_integration_script_test(
+  integration_tolerance_with_unit
+  "tests/data/gerbv_example/backtrack"
+  PCB2GCODE_ARGS "--tolerance=0.05mm")
+
+# The millproject has mirror-yaxis=true, so the output matches expected/ only if
+# the flag without a value means true.
+pcb2gcode_add_integration_script_test(
+  integration_mirror_yaxis_flag
+  "tests/data/gerbv_example/example_board_new_mirror_y"
+  PCB2GCODE_ARGS "--mirror-yaxis")
+
 pcb2gcode_add_integration_script_test(
   integration_negative_spinup
   "tests/data/gerbv_example/am-test"
